@@ -1,0 +1,22 @@
+﻿__pycache__/
+*.pyc
+.venv/
+venv/
+*.log
+artifacts/
+logs/
+scripts/*.pid
+scripts/*.process.json
+
+# Personal config and runtime data
+voicepaste.config.json
+voice_paste/
+*.txt
+.claude/
+
+# Internal estate notes
+IMPROVEMENT_PLAN.md
+RESTORE_NOTES_*.md
+VoicePaste - Overall Assessment.md
+VoicePaste_Phase9_Plan.md
+Voice_Translator_Review.md

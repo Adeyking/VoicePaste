@@ -1,0 +1,13 @@
+﻿{
+  "exact": {
+    "kubernetes": "Kubernetes",
+    "docker compose": "docker-compose",
+    "github": "GitHub",
+    "fastapi": "FastAPI",
+    "ollama": "Ollama",
+    "whisper": "Whisper",
+    "tailscale": "Tailscale",
+    "new line": "\n",
+    "new paragraph": "\n\n"
+  }
+}
