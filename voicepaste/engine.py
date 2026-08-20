@@ -48,6 +48,7 @@ from .stt_client import check_health as stt_check_health, transcribe_audio
 from .stt_client import (
     fetch_remote_vocabulary,
     push_vocabulary_correction,
+    set_stt_token,
     transcribe_audio_stream_partial,
 )
 
@@ -250,6 +251,7 @@ class VoicePasteConfig:
     hud_enabled: bool
     ptt_mouse_xbutton1: bool
     quit_hotkey: str
+    stt_bearer_token: str = ""
 
     @classmethod
     def load(cls, args: argparse.Namespace) -> "VoicePasteConfig":
@@ -584,8 +586,13 @@ class VoicePasteConfig:
                 pick("QUIT_HOTKEY", getattr(args, "quit_hotkey", None), DEFAULT_QUIT_HOTKEY)
             ).strip().lower()
             or DEFAULT_QUIT_HOTKEY,
+            stt_bearer_token=str(
+                pick("STT_BEARER_TOKEN", getattr(args, "stt_bearer_token", None), os.getenv("STT_BEARER_TOKEN", ""))
+            ).strip(),
         )
         cfg.validate()
+        if cfg.stt_bearer_token:
+            set_stt_token(cfg.stt_bearer_token)
         return cfg
 
     def save(self) -> None:
@@ -641,6 +648,7 @@ class VoicePasteConfig:
             hud_enabled=merged.get("HUD_ENABLED"),
             ptt_mouse_xbutton1=merged.get("PTT_MOUSE_XBUTTON1"),
             quit_hotkey=merged.get("QUIT_HOTKEY"),
+            stt_bearer_token=merged.get("STT_BEARER_TOKEN", ""),
         )
         return VoicePasteConfig.load(ns)
 
@@ -659,6 +667,7 @@ class VoicePasteConfig:
     def to_json_dict(self) -> Dict[str, Any]:
         return {
             "STT_URL": self.stt_url,
+            "STT_BEARER_TOKEN": self.stt_bearer_token,
             "OLLAMA_URL": self.ollama_url,
             "CLEAN_ENABLED": self.clean_enabled,
             "CLEAN_MODEL_LOCAL": self.active_local_model,
@@ -856,6 +865,8 @@ class PushToTalkClient:
         event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> None:
         self.config = config
+        if getattr(config, "stt_bearer_token", ""):
+            set_stt_token(config.stt_bearer_token)
         self.language = os.getenv("STT_LANGUAGE", "en")
         self._status_callback = status_callback
         self._event_callback = event_callback

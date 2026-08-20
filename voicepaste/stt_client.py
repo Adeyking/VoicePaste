@@ -1,11 +1,23 @@
-from __future__ import annotations
-
+import os
 import time
 from typing import Any, Optional, Tuple
 
 import requests
 
 _session = requests.Session()
+
+
+def set_stt_token(token: str) -> None:
+    if token:
+        _session.headers["Authorization"] = f"Bearer {token.strip()}"
+    elif "Authorization" in _session.headers:
+        del _session.headers["Authorization"]
+
+
+# Initial token load from environment if present
+_env_token = os.getenv("STT_BEARER_TOKEN", "").strip() or os.getenv("STT_API_KEY", "").strip()
+if _env_token:
+    set_stt_token(_env_token)
 
 
 def check_health(stt_health_url: str, stt_timeout_ms: int) -> bool:
