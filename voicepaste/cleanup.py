@@ -65,6 +65,9 @@ def assistant_prompt(text: str, profile: str) -> str:
     )
 
 
+_ollama_session = requests.Session()
+
+
 def call_ollama_generate(
     ollama_generate_url: str,
     ollama_keep_alive: str,
@@ -83,7 +86,7 @@ def call_ollama_generate(
     if ollama_keep_alive:
         payload["keep_alive"] = ollama_keep_alive
 
-    response = requests.post(
+    response = _ollama_session.post(
         ollama_generate_url,
         json=payload,
         timeout=max(0.5, timeout_ms / 1000.0),

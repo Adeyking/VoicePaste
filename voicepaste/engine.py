@@ -32,6 +32,7 @@ import requests
 import sounddevice as sd
 import winsound
 
+from .audio_processing import preprocess_audio_for_stt
 from .cleanup import (
     assistant_prompt as build_assistant_prompt,
     call_claude_generate,
@@ -1852,12 +1853,13 @@ class PushToTalkClient:
             self._status("MEETING", f"Meeting session stopped ({session_id}).")
 
     def _to_wav_bytes(self, audio: np.ndarray) -> bytes:
+        processed_audio = preprocess_audio_for_stt(audio)
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as wf:
             wf.setnchannels(CHANNELS)
             wf.setsampwidth(2)
             wf.setframerate(SAMPLE_RATE)
-            wf.writeframes(audio.tobytes())
+            wf.writeframes(processed_audio.tobytes())
         return buffer.getvalue()
 
     def _strict_cleanup_prompt(self, raw_text: str) -> str:
