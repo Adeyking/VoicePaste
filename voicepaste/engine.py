@@ -32,7 +32,13 @@ import requests
 import sounddevice as sd
 import winsound
 
-from .audio_processing import preprocess_audio_for_stt
+from .audio_processing import (
+    StreamingBiquadHighpassFilter,
+    normalize_audio,
+    preprocess_audio_for_stt,
+    trim_trailing_silence,
+)
+
 from .cleanup import (
     assistant_prompt as build_assistant_prompt,
     call_claude_generate,
@@ -943,12 +949,15 @@ class PushToTalkClient:
         self._meeting_session_thread: Optional[threading.Thread] = None
         self._meeting_last_session_notice_at = 0.0
         self._meeting_chunk_started_at = 0.0
+        self._biquad_stream_filter = StreamingBiquadHighpassFilter()
+        self._meeting_biquad_stream_filter = StreamingBiquadHighpassFilter()
         self._load_phrase_corrections()
         self._load_snippets()
         try:
             threading.Thread(target=self._sync_remote_vocabulary, daemon=True).start()
         except Exception:
             pass
+
 
 
     def _pipeline_config_snapshot(self) -> Dict[str, Any]:
@@ -1515,7 +1524,8 @@ class PushToTalkClient:
             self._status("AUDIO", f"Input warning: {status}")
         with self._lock:
             if self._recording:
-                self._frames.append(indata.copy())
+                filtered = self._biquad_stream_filter.process(indata)
+                self._frames.append(filtered)
 
     def start_recording(self) -> None:
         target_hwnd = USER32.GetForegroundWindow()
@@ -1529,7 +1539,9 @@ class PushToTalkClient:
             if self._recording:
                 return
             self._frames = []
+            self._biquad_stream_filter.reset()
             self._recording = True
+
             self._target_hwnd = target_hwnd
             self._record_start_monotonic = time.perf_counter()
             self._current_recording_id = self._utterance_counter + 1
@@ -1702,7 +1714,8 @@ class PushToTalkClient:
             self._status("AUDIO", f"Meeting input warning: {status}")
         with self._lock:
             if self._meeting_session_active:
-                self._meeting_session_frames.append(indata.copy())
+                filtered = self._meeting_biquad_stream_filter.process(indata)
+                self._meeting_session_frames.append(filtered)
 
     def start_meeting_session(self, announce: bool = True) -> None:
         with self._lock:
@@ -1720,7 +1733,9 @@ class PushToTalkClient:
             )
             session_id = self._meeting_session_id
             self._meeting_session_frames = []
+            self._meeting_biquad_stream_filter.reset()
             self._meeting_chunk_started_at = time.monotonic()
+
             try:
                 self._meeting_session_stream = sd.InputStream(
                     samplerate=SAMPLE_RATE,
@@ -1853,7 +1868,8 @@ class PushToTalkClient:
             self._status("MEETING", f"Meeting session stopped ({session_id}).")
 
     def _to_wav_bytes(self, audio: np.ndarray) -> bytes:
-        processed_audio = preprocess_audio_for_stt(audio)
+        trimmed_audio = trim_trailing_silence(audio, sample_rate=SAMPLE_RATE)
+        processed_audio = normalize_audio(trimmed_audio)
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as wf:
             wf.setnchannels(CHANNELS)
@@ -1861,6 +1877,8 @@ class PushToTalkClient:
             wf.setframerate(SAMPLE_RATE)
             wf.writeframes(processed_audio.tobytes())
         return buffer.getvalue()
+
+
 
     def _strict_cleanup_prompt(self, raw_text: str) -> str:
         return strict_cleanup_prompt(raw_text)
@@ -2075,10 +2093,7 @@ class PushToTalkClient:
             return raw_text, False, 0, "verbatim"
 
         # Quality mode: block until cleanup completes so the paste fires only once,
-        # with the quality-cleaned text.  The latency-first approach (paste raw
-        # immediately, refine in background) breaks quality mode because the timeout
-        # fires before the slower model finishes, raw text gets pasted, and the
-        # quality result is then silently dropped onto the clipboard without a paste.
+        # with the quality-cleaned text.
         if model_profile == "quality":
             cleaned, used_fallback, cleanup_ms, route = self._clean_blocking_with_fallback(
                 prompt,
@@ -2094,51 +2109,19 @@ class PushToTalkClient:
                 self._on_cleanup_fallback(utterance_id)
             return (cleaned or raw_text), used_fallback, cleanup_ms, route
 
-        num_predict = 160
+        # Fast profile (dictation fast-path):
+        # Fast deterministic polish in <0.1ms: removes speech fillers (um, uh, er, ah, hmm)
+        # and duplicate words with instant regex/n-gram polish without LLM round-trip delay.
         started = time.perf_counter()
-        local_future = self._executor.submit(
-            self._call_ollama_generate,
-            pipeline_cfg["active_local_model"],
-            prompt,
-            pipeline_cfg["model_request_timeout_ms"],
-            num_predict,
-            pipeline_cfg,
-        )
-
-        try:
-            cleaned = local_future.result(
-                timeout=pipeline_cfg["active_local_timeout_ms"] / 1000.0
-            )
-            cleanup_ms = int((time.perf_counter() - started) * 1000)
-            if cleaned:
-                return cleaned, False, cleanup_ms, "local"
-        except FutureTimeoutError:
-            cleanup_ms = int((time.perf_counter() - started) * 1000)
-            self._status(
-                "CLEANING",
-                "Local cleanup timed out; raw text pasted immediately.",
-                utterance_id,
-            )
-            self._executor.submit(
-                self._late_refine_after_timeout,
-                local_future,
-                prompt,
-                utterance_id,
-                "dictation",
-                pipeline_cfg,
-                target_hwnd,
-                raw_text,
-            )
-            return raw_text, False, cleanup_ms, "none"
-        except Exception as exc:
-            self._status("CLEANING", f"Local cleanup failed: {exc}", utterance_id)
-            logging.getLogger("voicepaste").error("Cleanup exception", exc_info=exc)
-            self._increment_error("cleanup_errors")
-
+        deduped = post_clean_dedupe(raw_text)
+        polished = light_post_polish(deduped)
         cleanup_ms = int((time.perf_counter() - started) * 1000)
-        self._status("FALLBACK", "Cleanup failed — pasting raw transcript", utterance_id)
-        self._on_cleanup_fallback(utterance_id)
+        if polished:
+            self._status("CLEANING", "Applied fast dictation polish.", utterance_id)
+            return polished, False, cleanup_ms, "fast_polish"
+
         return raw_text, False, cleanup_ms, "none"
+
 
     def _clean_blocking_with_fallback(
         self,

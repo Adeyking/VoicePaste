@@ -46,14 +46,16 @@ def paste_transcript(
         return False
 
     try:
-        time.sleep(0.12)
+        time.sleep(0.015)
         keyboard.send("ctrl+v")
-        time.sleep(0.05)
+        time.sleep(0.010)
         return True
+
     except Exception as exc:
         increment_error("paste_failures")
         status("ERROR", f"Paste failed: {exc}")
         return False
+
 
 
 def append_to_journal(text: str, journal_file_path: str) -> Path:

@@ -86,8 +86,9 @@ def transcribe_audio_stream_partial(
             stream_url,
             files=files,
             data=data,
-            timeout=max(1.0, stt_timeout_ms / 1000.0),
+            timeout=min(max(0.5, stt_timeout_ms / 1000.0), 2.5),
         )
+
         response.raise_for_status()
     except requests.RequestException as exc:
         return None, int((time.perf_counter() - started) * 1000), f"Partial transcription request failed: {exc}"
