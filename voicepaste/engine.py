@@ -1599,9 +1599,8 @@ class PushToTalkClient:
                 stream.close()
             except Exception as exc:
                 self._status("AUDIO", f"Stream close warning: {exc}", utterance_id)
-        if self._partial_thread is not None:
-            self._partial_thread.join(timeout=1.0)
-            self._partial_thread = None
+        self._partial_thread = None
+
 
         self._last_utterance_at = time.monotonic()
 

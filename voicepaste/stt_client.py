@@ -3,8 +3,18 @@ import time
 from typing import Any, Optional, Tuple
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 _session = requests.Session()
+_adapter = HTTPAdapter(
+    pool_connections=10,
+    pool_maxsize=10,
+    max_retries=Retry(total=1, backoff_factor=0.05),
+)
+_session.mount("http://", _adapter)
+_session.mount("https://", _adapter)
+
 
 
 def set_stt_token(token: str) -> None:
