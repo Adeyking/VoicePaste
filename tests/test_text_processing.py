@@ -1,7 +1,6 @@
 import re
 
 import pytest
-
 from voicepaste.text_processing import (
     apply_phrase_corrections,
     dedupe_consecutive_sentences,
@@ -52,7 +51,10 @@ def test_dedupe_consecutive_sentences(raw: str, expected: str) -> None:
 
 def test_dedupe_consecutive_sentences_handles_missing_space_after_punctuation() -> None:
     raw = "It's not working as well as it did before.It's not working as well as it did before."
-    assert dedupe_consecutive_sentences(raw) == "It's not working as well as it did before."
+    assert (
+        dedupe_consecutive_sentences(raw)
+        == "It's not working as well as it did before."
+    )
 
 
 @pytest.mark.parametrize(
@@ -101,7 +103,9 @@ def test_post_clean_dedupe_handles_no_space_sentence_duplication() -> None:
 def test_apply_phrase_corrections_exact_and_regex() -> None:
     phrase_exact = [("alarma", "Ollama"), ("fast api", "FastAPI")]
     phrase_regex = [(re.compile(r"\bto to\b", re.IGNORECASE), "to")]
-    text, applied = apply_phrase_corrections("alarma sent to to FastAPI", phrase_exact, phrase_regex)
+    text, applied = apply_phrase_corrections(
+        "alarma sent to to FastAPI", phrase_exact, phrase_regex
+    )
     assert text == "Ollama sent to FastAPI"
     assert "exact:alarma->Ollamax1" in applied
     assert "regex:\\bto to\\b->tox1" in applied
@@ -123,13 +127,19 @@ def test_apply_phrase_corrections_estate_terms() -> None:
         ("encrypt2 tasks", "crypto tasks"),
         ("no peace to print me", "novice-friendly"),
     ]
-    text, _ = apply_phrase_corrections("Agree a solution with bop ashore", phrase_exact, [])
+    text, _ = apply_phrase_corrections(
+        "Agree a solution with bop ashore", phrase_exact, []
+    )
     assert text == "Agree a solution with Bob assurer"
 
-    text2, _ = apply_phrase_corrections("modify apps on phone to use tailscape", phrase_exact, [])
+    text2, _ = apply_phrase_corrections(
+        "modify apps on phone to use tailscape", phrase_exact, []
+    )
     assert text2 == "modify apps on phone to use Tailscale"
 
-    text3, _ = apply_phrase_corrections("we ran some con jobs for qwen 3.8 and encrypt2 tasks", phrase_exact, [])
+    text3, _ = apply_phrase_corrections(
+        "we ran some con jobs for qwen 3.8 and encrypt2 tasks", phrase_exact, []
+    )
     assert text3 == "we ran some cron jobs for Qwen 3.5 and crypto tasks"
 
 
@@ -141,7 +151,9 @@ def test_apply_phrase_corrections_multiword_order() -> None:
         ("bob assure", "Bob assurer"),
         ("kimmy k3", "Kimi-k3"),
     ]
-    text, _ = apply_phrase_corrections("let bob assure the implementation with kimmy k3", phrase_exact, [])
+    text, _ = apply_phrase_corrections(
+        "let bob assure the implementation with kimmy k3", phrase_exact, []
+    )
     assert text == "let Bob assurer the implementation with Kimi-k3"
 
 
@@ -151,3 +163,13 @@ def test_dedupe_repeated_ngrams_preserves_clause_boundaries() -> None:
     assert dedupe_repeated_ngrams(raw) == "when I've used it, it did search the web"
     assert post_clean_dedupe(raw) == "when I've used it, it did search the web"
 
+
+def test_apply_phrase_corrections_punctuation_split_regex() -> None:
+    regex_rules = [
+        (re.compile(r"\bvoice\s*[,.-]?\s*paste\b", re.IGNORECASE), "VoicePaste"),
+    ]
+    raw = "Review, Voice, Paste, Logs and Fine-Tune as you see from the logs"
+    text, applied = apply_phrase_corrections(raw, [], regex_rules)
+    assert "VoicePaste" in text
+    assert "Voice, Paste" not in text
+    assert len(applied) == 1

@@ -82,7 +82,7 @@ if (-not $runningProc -and $cliPid) {
 
 if (-not $runningProc) {
     $scan = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -eq "python.exe" -and
+        $_.Name -in @("python.exe", "pythonw.exe") -and
         $_.CommandLine -and
         (($_.CommandLine -match "client\.py") -or ($_.CommandLine -match "voicepaste\.tray_app"))
     } | Select-Object -First 1

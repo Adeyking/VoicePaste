@@ -3,20 +3,20 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Set
+from typing import Any
 
 
 def curate_vocabulary_from_logs_and_inbox(
     log_dir: Path | str,
     inbox_dir: Path | str,
     phrase_corrections_path: Path | str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     log_path = Path(log_dir)
     inbox_path = Path(inbox_dir)
     corrections_file = Path(phrase_corrections_path)
 
     # 1. Load existing phrase corrections
-    existing_data: Dict[str, Any] = {"exact": {}, "regex": []}
+    existing_data: dict[str, Any] = {"exact": {}, "regex": []}
     if corrections_file.exists():
         try:
             with corrections_file.open("r", encoding="utf-8") as h:
@@ -26,18 +26,68 @@ def curate_vocabulary_from_logs_and_inbox(
         except Exception:
             pass
 
-    exact_map: Dict[str, str] = existing_data.setdefault("exact", {})
-    existing_keys: Set[str] = {k.lower().strip() for k in exact_map.keys()}
+    exact_map: dict[str, str] = existing_data.setdefault("exact", {})
+    existing_keys: set[str] = {k.lower().strip() for k in exact_map}
 
     scanned_logs = 0
     scanned_inbox_notes = 0
-    new_pairs: List[Dict[str, str]] = []
+    new_pairs: list[dict[str, str]] = []
 
     STOP_WORDS = {
-        "a", "an", "the", "to", "in", "on", "of", "and", "or", "is", "it", "at", "by",
-        "for", "with", "as", "be", "do", "we", "he", "she", "me", "my", "so", "if", "no",
-        "up", "all", "out", "how", "why", "who", "what", "when", "where", "can", "may",
-        "post", "get", "put", "delete", "http", "https", "url", "uri", "html", "json",
+        "a",
+        "an",
+        "the",
+        "to",
+        "in",
+        "on",
+        "of",
+        "and",
+        "or",
+        "is",
+        "it",
+        "at",
+        "by",
+        "for",
+        "with",
+        "as",
+        "be",
+        "do",
+        "we",
+        "he",
+        "she",
+        "me",
+        "my",
+        "so",
+        "if",
+        "no",
+        "up",
+        "all",
+        "out",
+        "how",
+        "why",
+        "who",
+        "what",
+        "when",
+        "where",
+        "can",
+        "may",
+        "post",
+        "get",
+        "put",
+        "delete",
+        "http",
+        "https",
+        "url",
+        "uri",
+        "html",
+        "json",
+        "use",
+        "model",
+        "models",
+        "this",
+        "that",
+        "there",
+        "here",
     }
 
     # Helper to add a candidate correction
@@ -70,16 +120,28 @@ def curate_vocabulary_from_logs_and_inbox(
                                 try:
                                     evt = json.loads(match.group(1))
                                     raw = str(evt.get("stt_text_raw", "")).strip()
-                                    corrected = str(evt.get("stt_text_corrected", "")).strip()
+                                    corrected = str(
+                                        evt.get("stt_text_corrected", "")
+                                    ).strip()
 
-                                    # Check spoken correction triggers ("correct [X] to [Y]")
-                                    spoken_match = re.search(
-                                        r"\bcorrect\s+(.+?)\s+to\s+(.+)\b",
+                                    # Check explicit spoken correction triggers ("correct [X] to [Y]")
+                                    spoken_match = re.match(
+                                        r"^\s*(?:voice\s*paste\s+)?correct\s+[\"']?([a-zA-Z0-9\s-]{2,30})[\"']?\s+to\s+[\"']?([a-zA-Z0-9\s-]{2,30})[\"']?\s*[\.!?]?$",
                                         raw,
                                         re.IGNORECASE,
                                     )
                                     if spoken_match:
-                                        add_candidate(spoken_match.group(1), spoken_match.group(2))
+                                        cand_w = (
+                                            spoken_match.group(1).strip().strip("'\"")
+                                        )
+                                        cand_r = (
+                                            spoken_match.group(2).strip().strip("'\"")
+                                        )
+                                        if (
+                                            len(cand_w.split()) <= 3
+                                            and len(cand_r.split()) <= 3
+                                        ):
+                                            add_candidate(cand_w, cand_r)
 
                                     # Check raw vs corrected diffs (strictly for casing / capitalization of proper nouns)
                                     if raw and corrected and raw != corrected:
@@ -92,10 +154,13 @@ def curate_vocabulary_from_logs_and_inbox(
                                                 if (
                                                     rw_clean
                                                     and cw_clean
-                                                    and rw_clean.lower() == cw_clean.lower()
+                                                    and rw_clean.lower()
+                                                    == cw_clean.lower()
                                                     and rw_clean != cw_clean
                                                 ):
-                                                    add_candidate(rw_clean.lower(), cw_clean)
+                                                    add_candidate(
+                                                        rw_clean.lower(), cw_clean
+                                                    )
                                 except Exception:
                                     pass
             except Exception:
@@ -106,7 +171,9 @@ def curate_vocabulary_from_logs_and_inbox(
         inbox_files = list(inbox_path.glob("**/*.md"))
         scanned_inbox_notes = len(inbox_files)
         # Extract common tech terms & proper nouns (CamelCase, acronyms)
-        tech_term_pattern = re.compile(r"\b([A-Z][a-z0-9]+[A-Z][a-zA-Z0-9]*|[A-Z]{3,})\b")
+        tech_term_pattern = re.compile(
+            r"\b([A-Z][a-z0-9]+[A-Z][a-zA-Z0-9]*|[A-Z]{3,})\b"
+        )
         for md_file in inbox_files:
             try:
                 content = md_file.read_text(encoding="utf-8", errors="ignore")

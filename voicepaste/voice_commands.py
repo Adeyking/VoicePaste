@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import re
-from typing import List, Tuple
-
 
 _LITERAL_PATTERNS = (
     "new paragraph",
@@ -12,7 +10,6 @@ _LITERAL_PATTERNS = (
     "period",
     "comma",
     "scratch that",
-    "actually",
 )
 
 
@@ -29,23 +26,7 @@ def _clean_spacing(text: str) -> str:
     return out.strip()
 
 
-def _apply_backtrack_actually(text: str) -> Tuple[str, bool]:
-    lowered = text.lower()
-    marker = "actually"
-    idx = lowered.find(marker)
-    if idx < 0:
-        return text, False
-    before = text[:idx]
-    after = text[idx + len(marker) :]
-    cut = max(before.rfind("."), before.rfind("!"), before.rfind("?"), before.rfind("\n"))
-    if cut >= 0:
-        before = before[: cut + 1]
-    else:
-        before = ""
-    return _clean_spacing(f"{before} {after}"), True
-
-
-def _apply_backtrack_scratch_that(text: str) -> Tuple[str, bool]:
+def _apply_backtrack_scratch_that(text: str) -> tuple[str, bool]:
     lowered = text.lower()
     marker = "scratch that"
     idx = lowered.find(marker)
@@ -53,7 +34,9 @@ def _apply_backtrack_scratch_that(text: str) -> Tuple[str, bool]:
         return text, False
     before = text[:idx]
     after = text[idx + len(marker) :]
-    cut = max(before.rfind("."), before.rfind("!"), before.rfind("?"), before.rfind("\n"))
+    cut = max(
+        before.rfind("."), before.rfind("!"), before.rfind("?"), before.rfind("\n")
+    )
     if cut >= 0:
         before = before[: cut + 1]
     else:
@@ -61,8 +44,8 @@ def _apply_backtrack_scratch_that(text: str) -> Tuple[str, bool]:
     return _clean_spacing(f"{before} {after}"), True
 
 
-def _apply_obsidian_formatting(text: str) -> Tuple[str, List[str]]:
-    applied: List[str] = []
+def _apply_obsidian_formatting(text: str) -> tuple[str, list[str]]:
+    applied: list[str] = []
     out = text
 
     callout_pattern = re.compile(
@@ -89,27 +72,81 @@ def _apply_obsidian_formatting(text: str) -> Tuple[str, List[str]]:
     if idea_count:
         applied.append(f"obsidian:tag_idea:{idea_count}")
 
+    # Strictly require explicit command format at the start of the utterance
     corr_pattern = re.compile(
-        r"(?:^|\s)correct\s+(.+?)\s+(?:to|as)\s+(.+?)(?=[,.;:!?]|\s*$)",
+        r"^\s*(?:voice\s*paste\s+)?correct\s+[\"']?([a-zA-Z0-9\s-]{2,30})[\"']?\s+(?:to|as)\s+[\"']?([a-zA-Z0-9\s-]{2,30})[\"']?\s*[\.!?]?$",
         flags=re.IGNORECASE,
     )
-    m = corr_pattern.search(out)
+    m = corr_pattern.match(out)
     if m:
-        wrong = m.group(1).strip()
-        right = m.group(2).strip()
-        if wrong and right:
+        wrong = m.group(1).strip().strip("'\"")
+        right = m.group(2).strip().strip("'\"")
+        stop_words = {
+            "a",
+            "an",
+            "the",
+            "to",
+            "in",
+            "on",
+            "of",
+            "and",
+            "or",
+            "is",
+            "it",
+            "at",
+            "by",
+            "for",
+            "with",
+            "as",
+            "be",
+            "do",
+            "we",
+            "he",
+            "she",
+            "me",
+            "my",
+            "so",
+            "if",
+            "no",
+            "up",
+            "all",
+            "out",
+            "how",
+            "why",
+            "who",
+            "what",
+            "when",
+            "where",
+            "can",
+            "may",
+            "use",
+            "model",
+            "models",
+            "this",
+            "that",
+            "there",
+            "here",
+        }
+        if (
+            wrong
+            and right
+            and len(wrong.split()) <= 3
+            and len(right.split()) <= 3
+            and wrong.lower() not in stop_words
+            and wrong.lower() != right.lower()
+        ):
             applied.append(f"add_correction:{wrong}->{right}")
             out = corr_pattern.sub(f"{right}", out)
 
     return out, applied
 
 
-def apply_voice_commands(text: str) -> Tuple[str, List[str]]:
+def apply_voice_commands(text: str) -> tuple[str, list[str]]:
     out = (text or "").strip()
     if not out:
         return "", []
 
-    applied: List[str] = []
+    applied: list[str] = []
     literals: dict[str, str] = {}
     for i, phrase in enumerate(_LITERAL_PATTERNS):
         token = f"__VOICE_LITERAL_{i}__"
@@ -139,10 +176,6 @@ def apply_voice_commands(text: str) -> Tuple[str, List[str]]:
     out, changed = _apply_backtrack_scratch_that(out)
     if changed:
         applied.append("scratch_that")
-
-    out, changed = _apply_backtrack_actually(out)
-    if changed:
-        applied.append("actually")
 
     for token, phrase in literals.items():
         out = out.replace(token, phrase)

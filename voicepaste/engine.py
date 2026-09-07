@@ -13,53 +13,52 @@ import sys
 import threading
 import time
 import wave
+import winsound
+from collections.abc import Callable
 from concurrent.futures import (
     Future,
     ThreadPoolExecutor,
-    TimeoutError as FutureTimeoutError,
 )
 from ctypes import wintypes
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 from uuid import uuid4
 
 import keyboard
 import numpy as np
 import pyperclip
-import requests
 import sounddevice as sd
-import winsound
 
+from . import defaults
 from .audio_processing import (
     StreamingBiquadHighpassFilter,
     normalize_audio,
-    preprocess_audio_for_stt,
     trim_trailing_silence,
 )
-
 from .cleanup import (
     assistant_prompt as build_assistant_prompt,
+)
+from .cleanup import (
     call_claude_generate,
     call_ollama_generate,
     check_model_loaded_in_vram,
     quality_cleanup_prompt,
     strict_cleanup_prompt,
 )
-from . import defaults
 from .delivery import append_to_journal, append_to_transcript_file, paste_transcript
 from .log_utils import prune_old_logs
 from .partial_stabilizer import PartialTranscriptStabilizer
-from .stt_client import check_health as stt_check_health, transcribe_audio
+from .snippets import apply_snippets, load_snippets
+from .stt_client import check_health as stt_check_health
 from .stt_client import (
     fetch_remote_vocabulary,
     push_vocabulary_correction,
     set_stt_token,
+    transcribe_audio,
     transcribe_audio_stream_partial,
 )
-
-from .snippets import apply_snippets, load_snippets
 from .text_processing import (
     apply_phrase_corrections,
     dedupe_consecutive_sentences,
@@ -68,10 +67,10 @@ from .text_processing import (
     post_clean_dedupe,
     sanitize_model_output,
 )
-from .voice_commands import apply_voice_commands
-from .vad import detect_silence_window, wait_for_silence
-from .hud import FloatingHUD
+from .vad import wait_for_silence
 from .version import __version__
+from .voice_commands import apply_voice_commands
+from .hud import FloatingHUD
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -104,7 +103,9 @@ PTT_KEY_SCAN_CODES = {
 }
 PTT_PRIMARY_CHORD_KEYS = {"ctrl", "alt"}
 PTT_FALLBACK_CHORD_KEYS = {"ctrl", "num0"}
-_FALLBACK_ALERT_THRESHOLD = 3  # tray ERROR notification after this many consecutive cleanup fallbacks
+_FALLBACK_ALERT_THRESHOLD = (
+    3  # tray ERROR notification after this many consecutive cleanup fallbacks
+)
 VALID_MODES = {"dictation", "assistant", "journal", "meeting"}
 VALID_PROFILES = {"neutral", "email", "chat"}
 VALID_MODEL_PROFILES = {"verbatim", "fast", "quality"}
@@ -205,7 +206,9 @@ class DailyLogger:
                         break
                     time.sleep(0.25)
             try:
-                with self._fallback_path_for_today().open("a", encoding="utf-8") as handle:
+                with self._fallback_path_for_today().open(
+                    "a", encoding="utf-8"
+                ) as handle:
                     handle.write(payload)
             except (PermissionError, OSError):
                 pass
@@ -269,7 +272,7 @@ class VoicePasteConfig:
             if config_path_arg
             else script_dir / defaults.DEFAULT_CONFIG_NAME
         )
-        file_config: Dict[str, Any] = {}
+        file_config: dict[str, Any] = {}
 
         if config_path.exists():
             with config_path.open("r", encoding="utf-8") as handle:
@@ -590,11 +593,21 @@ class VoicePasteConfig:
                 False,
             ),
             quit_hotkey=str(
-                pick("QUIT_HOTKEY", getattr(args, "quit_hotkey", None), DEFAULT_QUIT_HOTKEY)
-            ).strip().lower()
+                pick(
+                    "QUIT_HOTKEY",
+                    getattr(args, "quit_hotkey", None),
+                    DEFAULT_QUIT_HOTKEY,
+                )
+            )
+            .strip()
+            .lower()
             or DEFAULT_QUIT_HOTKEY,
             stt_bearer_token=str(
-                pick("STT_BEARER_TOKEN", getattr(args, "stt_bearer_token", None), os.getenv("STT_BEARER_TOKEN", ""))
+                pick(
+                    "STT_BEARER_TOKEN",
+                    getattr(args, "stt_bearer_token", None),
+                    os.getenv("STT_BEARER_TOKEN", ""),
+                )
             ).strip(),
         )
         cfg.validate()
@@ -607,7 +620,7 @@ class VoicePasteConfig:
         with self.config_path.open("w", encoding="utf-8") as handle:
             json.dump(self.to_json_dict(), handle, indent=2)
 
-    def merged(self, updates: Dict[str, Any]) -> "VoicePasteConfig":
+    def merged(self, updates: dict[str, Any]) -> "VoicePasteConfig":
         merged = self.to_json_dict()
         merged.update(updates)
         ns = argparse.Namespace(
@@ -660,7 +673,7 @@ class VoicePasteConfig:
         return VoicePasteConfig.load(ns)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "VoicePasteConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "VoicePasteConfig":
         parser = build_parser()
         args = parser.parse_args([])
         for k, v in data.items():
@@ -671,7 +684,7 @@ class VoicePasteConfig:
             args.hud_enabled = data["HUD_ENABLED"]
         return VoicePasteConfig.load(args)
 
-    def to_json_dict(self) -> Dict[str, Any]:
+    def to_json_dict(self) -> dict[str, Any]:
         return {
             "STT_URL": self.stt_url,
             "STT_BEARER_TOKEN": self.stt_bearer_token,
@@ -784,7 +797,7 @@ class VoicePasteConfig:
         date_str = now.strftime("%Y-%m-%d")
         return root / folder / year_str / month_str / f"{date_str}.md"
 
-    def ensure_voice_paste_directories(self) -> Dict[str, Path]:
+    def ensure_voice_paste_directories(self) -> dict[str, Path]:
         root = self.voice_paste_root_path()
         folders = {
             "inbox": root / "inbox",
@@ -804,7 +817,7 @@ class VoicePasteConfig:
     def snippets_path_expanded(self) -> Path:
         return Path(_expand_path(self.snippets_path))
 
-    def display(self) -> Dict[str, Any]:
+    def display(self) -> dict[str, Any]:
         return {
             "APP_MODE": self.app_mode,
             "STT_URL": self.stt_url,
@@ -846,7 +859,7 @@ class VoicePasteConfig:
         }
 
 
-def _normalize_ptt_key(event: Any) -> Optional[str]:
+def _normalize_ptt_key(event: Any) -> str | None:
     code = getattr(event, "scan_code", None)
     if code in PTT_KEY_SCAN_CODES:
         return PTT_KEY_SCAN_CODES[code]
@@ -868,8 +881,8 @@ class PushToTalkClient:
     def __init__(
         self,
         config: VoicePasteConfig,
-        status_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
-        event_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        status_callback: Callable[[dict[str, Any]], None] | None = None,
+        event_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.config = config
         if getattr(config, "stt_bearer_token", ""):
@@ -888,7 +901,7 @@ class PushToTalkClient:
         self._recording = False
         self._listening_enabled = True
         self._stream = None
-        self._frames: List[np.ndarray] = []
+        self._frames: list[np.ndarray] = []
         self._target_hwnd = None
         self._record_start_monotonic = 0.0
         self._mode = config.mode_default
@@ -904,13 +917,15 @@ class PushToTalkClient:
         self._latest_utterance_id = 0
         self._cloud_failure_count = 0
         self._cloud_breaker_open_until = 0.0
-        self._consecutive_fallbacks = 0  # resets on successful cleanup; triggers ERROR alert at threshold
-        self._error_counts: Dict[str, int] = {
+        self._consecutive_fallbacks = (
+            0  # resets on successful cleanup; triggers ERROR alert at threshold
+        )
+        self._error_counts: dict[str, int] = {
             "stt_errors": 0,
             "cleanup_errors": 0,
             "paste_failures": 0,
         }
-        self._stats: Dict[str, float] = {
+        self._stats: dict[str, float] = {
             "utterances_total": 0.0,
             "utterances_completed": 0.0,
             "utterances_stt_failed": 0.0,
@@ -922,31 +937,31 @@ class PushToTalkClient:
             "sum_total_ms": 0.0,
         }
         self._logger = DailyLogger(self.config.log_dir)
-        self._hotkey_refs: List[Any] = []
+        self._hotkey_refs: list[Any] = []
         self._keyboard_hook = None
         self._hotkeys_registered = False
         self._warm_state = "cold"
         self._last_utterance_at = 0.0
         self._vram_poll_stop_event = threading.Event()
-        self._vram_poll_thread: Optional[threading.Thread] = None
+        self._vram_poll_thread: threading.Thread | None = None
         self._mouse_ptt_stop_event = threading.Event()
-        self._mouse_ptt_thread: Optional[threading.Thread] = None
+        self._mouse_ptt_thread: threading.Thread | None = None
         self._mouse_ptt_down = False
         self._last_paused_notice_at = 0.0
         self._ptt_pressed: set[str] = set()
-        self._phrase_exact: List[Tuple[str, str]] = []
-        self._phrase_regex: List[Tuple[re.Pattern[str], str]] = []
+        self._phrase_exact: list[tuple[str, str]] = []
+        self._phrase_regex: list[tuple[re.Pattern[str], str]] = []
         self._phrase_mtime: float = 0.0
-        self._snippet_pairs: List[Tuple[str, str]] = []
+        self._snippet_pairs: list[tuple[str, str]] = []
         self._partial_stop_event = threading.Event()
-        self._partial_thread: Optional[threading.Thread] = None
-        self._partial_text_by_utterance: Dict[int, str] = {}
-        self._partial_stabilizers: Dict[int, PartialTranscriptStabilizer] = {}
+        self._partial_thread: threading.Thread | None = None
+        self._partial_text_by_utterance: dict[int, str] = {}
+        self._partial_stabilizers: dict[int, PartialTranscriptStabilizer] = {}
         self._meeting_session_active = False
-        self._meeting_session_id: Optional[str] = None
+        self._meeting_session_id: str | None = None
         self._meeting_session_stream: Any = None
-        self._meeting_session_frames: List[np.ndarray] = []
-        self._meeting_session_thread: Optional[threading.Thread] = None
+        self._meeting_session_frames: list[np.ndarray] = []
+        self._meeting_session_thread: threading.Thread | None = None
         self._meeting_last_session_notice_at = 0.0
         self._meeting_chunk_started_at = 0.0
         self._biquad_stream_filter = StreamingBiquadHighpassFilter()
@@ -958,9 +973,7 @@ class PushToTalkClient:
         except Exception:
             pass
 
-
-
-    def _pipeline_config_snapshot(self) -> Dict[str, Any]:
+    def _pipeline_config_snapshot(self) -> dict[str, Any]:
         with self._config_lock:
             cfg = self.config
             return {
@@ -995,7 +1008,7 @@ class PushToTalkClient:
                 "meeting_session_chunk_seconds": cfg.meeting_session_chunk_seconds,
             }
 
-    def _health_config_snapshot(self) -> Dict[str, Any]:
+    def _health_config_snapshot(self) -> dict[str, Any]:
         with self._config_lock:
             cfg = self.config
             return {
@@ -1023,7 +1036,9 @@ class PushToTalkClient:
             return
         try:
             winsound.MessageBeep(
-                winsound.MB_ICONEXCLAMATION if mode in ("warning", "error") else winsound.MB_OK
+                winsound.MB_ICONEXCLAMATION
+                if mode in ("warning", "error")
+                else winsound.MB_OK
             )
         except Exception:
             pass
@@ -1031,7 +1046,7 @@ class PushToTalkClient:
     _play_sound = _beep
 
     def _status(
-        self, state: str, message: str, utterance_id: Optional[int] = None
+        self, state: str, message: str, utterance_id: int | None = None
     ) -> None:
         stamp = datetime.now().strftime("%H:%M:%S")
         prefix = f"[u{utterance_id}]" if utterance_id else ""
@@ -1057,7 +1072,7 @@ class PushToTalkClient:
             except Exception:
                 pass
 
-    def _event(self, payload: Dict[str, Any]) -> None:
+    def _event(self, payload: dict[str, Any]) -> None:
         self._logger.write(f"EVENT {json.dumps(payload, ensure_ascii=True)}")
         if self._event_callback:
             try:
@@ -1070,7 +1085,7 @@ class PushToTalkClient:
             if key in self._error_counts:
                 self._error_counts[key] += 1
 
-    def _on_cleanup_fallback(self, utterance_id: Optional[int] = None) -> None:
+    def _on_cleanup_fallback(self, utterance_id: int | None = None) -> None:
         """Track consecutive cleanup fallbacks; emit ERROR tray alert at threshold."""
         with self._lock:
             self._consecutive_fallbacks += 1
@@ -1123,7 +1138,7 @@ class PushToTalkClient:
     def get_warm_state(self) -> str:
         return self._warm_state
 
-    def get_hotkey_bindings(self) -> Dict[str, str]:
+    def get_hotkey_bindings(self) -> dict[str, str]:
         return {
             "ptt": "Left Ctrl + Left Alt (fallback: Ctrl + Numpad 0)",
             "mode_dictation": MODE_HOTKEYS["dictation"],
@@ -1137,7 +1152,7 @@ class PushToTalkClient:
             "model_quality": MODEL_HOTKEYS["quality"],
         }
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         with self._stats_lock:
             snapshot = dict(self._stats)
         uptime_s = max(0.0, time.monotonic() - self._started_at_monotonic)
@@ -1161,7 +1176,7 @@ class PushToTalkClient:
             "error_counts": error_counts,
         }
 
-    def _record_stats(self, event: Dict[str, Any]) -> None:
+    def _record_stats(self, event: dict[str, Any]) -> None:
         timings = event.get("timings_ms", {})
         with self._stats_lock:
             self._stats["utterances_total"] += 1
@@ -1268,7 +1283,7 @@ class PushToTalkClient:
             self._status("IDLE", "Listening paused.")
 
     def update_runtime_config(
-        self, updates: Dict[str, Any], persist: bool = True
+        self, updates: dict[str, Any], persist: bool = True
     ) -> None:
         with self._config_lock:
             self.config = self.config.merged(updates)
@@ -1288,7 +1303,7 @@ class PushToTalkClient:
         with self._config_lock:
             self.config.save()
 
-    def _get_mode_and_profile(self) -> Tuple[str, str]:
+    def _get_mode_and_profile(self) -> tuple[str, str]:
         with self._mode_lock:
             return self._mode, self._assistant_profile
 
@@ -1297,12 +1312,14 @@ class PushToTalkClient:
             return
         self._hotkey_refs.append(
             keyboard.add_hotkey(
-                MODE_HOTKEYS["dictation"], lambda: self.set_mode("dictation", persist=True)
+                MODE_HOTKEYS["dictation"],
+                lambda: self.set_mode("dictation", persist=True),
             )
         )
         self._hotkey_refs.append(
             keyboard.add_hotkey(
-                MODE_HOTKEYS["assistant"], lambda: self.set_mode("assistant", persist=True)
+                MODE_HOTKEYS["assistant"],
+                lambda: self.set_mode("assistant", persist=True),
             )
         )
         self._hotkey_refs.append(
@@ -1362,7 +1379,9 @@ class PushToTalkClient:
         If the keyboard hook thread was unhooked or dropped due to a Windows OS
         exception, re-install the hook automatically.
         """
-        if self.is_listening() and (self._keyboard_hook is None or not self._hotkeys_registered):
+        if self.is_listening() and (
+            self._keyboard_hook is None or not self._hotkeys_registered
+        ):
             try:
                 self.install_keyboard_hooks()
                 self._status("HOOKS", "Re-installed keyboard hooks automatically.")
@@ -1601,7 +1620,6 @@ class PushToTalkClient:
                 self._status("AUDIO", f"Stream close warning: {exc}", utterance_id)
         self._partial_thread = None
 
-
         self._last_utterance_at = time.monotonic()
 
         if not frames:
@@ -1611,12 +1629,13 @@ class PushToTalkClient:
         audio = np.concatenate(frames, axis=0)
 
         # Safe trailing padding: keep full audio buffer so trailing words are never clipped
-        pass
 
         # Guard: Whisper hallucinates badly on very short clips (<300 ms)
         min_samples = int(SAMPLE_RATE * 0.3)  # 300 ms minimum
         if audio.shape[0] < min_samples:
-            self._status("STATUS", "Recording too short (<300 ms), ignoring.", utterance_id)
+            self._status(
+                "STATUS", "Recording too short (<300 ms), ignoring.", utterance_id
+            )
             return
 
         wav_bytes = self._to_wav_bytes(audio)
@@ -1681,10 +1700,10 @@ class PushToTalkClient:
             self._status("LIVE", stable_text[:96], utterance_id)
 
     def _transcribe_partial(
-        self, wav_bytes: bytes, pipeline_cfg: Dict[str, Any]
-    ) -> Tuple[str, int]:
+        self, wav_bytes: bytes, pipeline_cfg: dict[str, Any]
+    ) -> tuple[str, int]:
         # Keep partial prompt minimal to prevent hallucinations on sub-second audio slices
-        partial_prompt = "Ade, NucBox, VoicePaste."
+        partial_prompt = "Ade, NucBox, VoicePaste, Grok, Gemini, Claude, OpenClaw."
         partial_text, partial_ms, error = transcribe_audio_stream_partial(
             stt_url=pipeline_cfg["stt_url"],
             stt_timeout_ms=pipeline_cfg["stt_timeout_ms"],
@@ -1770,9 +1789,14 @@ class PushToTalkClient:
         energy_threshold: float = 400.0,
     ) -> None:
         """Hold the chunk boundary open until a silence window is detected."""
-        def _get_frames() -> List[np.ndarray]:
+
+        def _get_frames() -> list[np.ndarray]:
             with self._lock:
-                return list(self._meeting_session_frames) if self._meeting_session_active else []
+                return (
+                    list(self._meeting_session_frames)
+                    if self._meeting_session_active
+                    else []
+                )
 
         def _is_active() -> bool:
             with self._lock:
@@ -1877,12 +1901,10 @@ class PushToTalkClient:
             wf.writeframes(processed_audio.tobytes())
         return buffer.getvalue()
 
-
-
     def _strict_cleanup_prompt(self, raw_text: str) -> str:
         return strict_cleanup_prompt(raw_text)
 
-    def _build_cleanup_prompt(self, raw_text: str, model_profile: str) -> Optional[str]:
+    def _build_cleanup_prompt(self, raw_text: str, model_profile: str) -> str | None:
         """Select prompt based on active model profile. Returns None for verbatim (skip LLM)."""
         if model_profile == "verbatim":
             return None
@@ -1902,7 +1924,7 @@ class PushToTalkClient:
         prompt: str,
         timeout_ms: int,
         num_predict: int = 160,
-        pipeline_cfg: Optional[Dict[str, Any]] = None,
+        pipeline_cfg: dict[str, Any] | None = None,
     ) -> str:
         cfg = pipeline_cfg or self._pipeline_config_snapshot()
         return call_ollama_generate(
@@ -1918,7 +1940,7 @@ class PushToTalkClient:
         self,
         prompt: str,
         timeout_ms: int,
-        pipeline_cfg: Optional[Dict[str, Any]] = None,
+        pipeline_cfg: dict[str, Any] | None = None,
     ) -> str:
         cfg = pipeline_cfg or self._pipeline_config_snapshot()
         return call_claude_generate(
@@ -1928,7 +1950,7 @@ class PushToTalkClient:
             timeout_ms,
         )
 
-    def _cloud_fallback_allowed(self, mode: str, pipeline_cfg: Dict[str, Any]) -> bool:
+    def _cloud_fallback_allowed(self, mode: str, pipeline_cfg: dict[str, Any]) -> bool:
         if not pipeline_cfg["cloud_fallback_enabled"]:
             return False
         if mode == "dictation":
@@ -1936,7 +1958,7 @@ class PushToTalkClient:
         with self._fallback_lock:
             return time.monotonic() >= self._cloud_breaker_open_until
 
-    def _cloud_failure(self, pipeline_cfg: Dict[str, Any]) -> None:
+    def _cloud_failure(self, pipeline_cfg: dict[str, Any]) -> None:
         with self._fallback_lock:
             self._cloud_failure_count += 1
             if self._cloud_failure_count >= pipeline_cfg["cloud_breaker_threshold"]:
@@ -1958,9 +1980,9 @@ class PushToTalkClient:
         prompt: str,
         utterance_id: int,
         mode: str,
-        pipeline_cfg: Dict[str, Any],
+        pipeline_cfg: dict[str, Any],
         background: bool = False,
-    ) -> Tuple[Optional[str], bool, str]:
+    ) -> tuple[str | None, bool, str]:
         if not self._cloud_fallback_allowed(mode, pipeline_cfg):
             return None, False, "none"
 
@@ -2012,7 +2034,7 @@ class PushToTalkClient:
         prompt: str,
         utterance_id: int,
         mode: str,
-        pipeline_cfg: Dict[str, Any],
+        pipeline_cfg: dict[str, Any],
         original_hwnd: Any = None,
         raw_text: str = "",
     ) -> None:
@@ -2080,9 +2102,9 @@ class PushToTalkClient:
         self,
         raw_text: str,
         utterance_id: int,
-        pipeline_cfg: Dict[str, Any],
+        pipeline_cfg: dict[str, Any],
         target_hwnd: Any = None,
-    ) -> Tuple[str, bool, int, str]:
+    ) -> tuple[str, bool, int, str]:
         if not pipeline_cfg["clean_enabled"]:
             return raw_text, False, 0, "none"
 
@@ -2094,12 +2116,14 @@ class PushToTalkClient:
         # Quality mode: block until cleanup completes so the paste fires only once,
         # with the quality-cleaned text.
         if model_profile == "quality":
-            cleaned, used_fallback, cleanup_ms, route = self._clean_blocking_with_fallback(
-                prompt,
-                utterance_id,
-                pipeline_cfg["active_local_timeout_ms"],
-                mode="dictation",
-                pipeline_cfg=pipeline_cfg,
+            cleaned, used_fallback, cleanup_ms, route = (
+                self._clean_blocking_with_fallback(
+                    prompt,
+                    utterance_id,
+                    pipeline_cfg["active_local_timeout_ms"],
+                    mode="dictation",
+                    pipeline_cfg=pipeline_cfg,
+                )
             )
             if not cleaned:
                 self._status(
@@ -2121,15 +2145,14 @@ class PushToTalkClient:
 
         return raw_text, False, cleanup_ms, "none"
 
-
     def _clean_blocking_with_fallback(
         self,
         prompt: str,
         utterance_id: int,
         local_timeout_ms: int,
         mode: str,
-        pipeline_cfg: Dict[str, Any],
-    ) -> Tuple[Optional[str], bool, int, str]:
+        pipeline_cfg: dict[str, Any],
+    ) -> tuple[str | None, bool, int, str]:
         started = time.perf_counter()
         try:
             cleaned = self._call_ollama_generate(
@@ -2164,8 +2187,8 @@ class PushToTalkClient:
         )
 
     def _clean_for_journal(
-        self, raw_text: str, utterance_id: int, pipeline_cfg: Dict[str, Any]
-    ) -> Tuple[str, bool, int, str]:
+        self, raw_text: str, utterance_id: int, pipeline_cfg: dict[str, Any]
+    ) -> tuple[str, bool, int, str]:
         if not pipeline_cfg["clean_enabled"]:
             return raw_text, False, 0, "none"
         prompt = self._build_cleanup_prompt(raw_text, pipeline_cfg["model_profile"])
@@ -2179,7 +2202,9 @@ class PushToTalkClient:
             pipeline_cfg=pipeline_cfg,
         )
         if not cleaned:
-            self._status("FALLBACK", "Cleanup failed — pasting raw transcript", utterance_id)
+            self._status(
+                "FALLBACK", "Cleanup failed — pasting raw transcript", utterance_id
+            )
             self._on_cleanup_fallback(utterance_id)
         return (cleaned or raw_text), used_fallback, cleanup_ms, route
 
@@ -2188,8 +2213,8 @@ class PushToTalkClient:
         raw_text: str,
         utterance_id: int,
         profile: str,
-        pipeline_cfg: Dict[str, Any],
-    ) -> Tuple[str, bool, int, str]:
+        pipeline_cfg: dict[str, Any],
+    ) -> tuple[str, bool, int, str]:
         if not pipeline_cfg["clean_enabled"]:
             return raw_text, False, 0, "none"
 
@@ -2264,7 +2289,7 @@ class PushToTalkClient:
         mode: str,
         utterance_id: int,
         target_hwnd: Any,
-        pipeline_cfg: Dict[str, Any],
+        pipeline_cfg: dict[str, Any],
     ) -> str:
         is_latest = self._is_latest_utterance(utterance_id)
         try:
@@ -2328,6 +2353,14 @@ class PushToTalkClient:
             "Python",
             "Markdown",
             "GitHub",
+            "Grok",
+            "Gemini",
+            "Claude",
+            "Claude Code",
+            "OpenClaw",
+            "NucBox",
+            "Bob assurer",
+            "OAuth",
         ]
         terms = list(core_terms)
         with self._phrase_lock:
@@ -2345,8 +2378,8 @@ class PushToTalkClient:
         return ", ".join(terms)
 
     def _transcribe(
-        self, wav_bytes: bytes, utterance_id: int, pipeline_cfg: Dict[str, Any]
-    ) -> Tuple[Optional[str], int]:
+        self, wav_bytes: bytes, utterance_id: int, pipeline_cfg: dict[str, Any]
+    ) -> tuple[str | None, int]:
         self._status("TRANSCRIBING", "Sending audio to STT service...", utterance_id)
         prompt = self._build_initial_prompt()
         raw_text, stt_ms, error = transcribe_audio(
@@ -2397,8 +2430,8 @@ class PushToTalkClient:
             self._status("ERROR", "phrase_corrections.json root must be an object.")
             return
 
-        phrase_exact: List[Tuple[str, str]] = []
-        phrase_regex: List[Tuple[re.Pattern[str], str]] = []
+        phrase_exact: list[tuple[str, str]] = []
+        phrase_regex: list[tuple[re.Pattern[str], str]] = []
 
         exact = payload.get("exact", {})
         if isinstance(exact, dict):
@@ -2442,7 +2475,7 @@ class PushToTalkClient:
         except OSError:
             pass
 
-    def _apply_phrase_corrections(self, text: str) -> Tuple[str, List[str]]:
+    def _apply_phrase_corrections(self, text: str) -> tuple[str, list[str]]:
         self._ensure_phrase_corrections_fresh()
         with self._phrase_lock:
             phrase_exact = list(self._phrase_exact)
@@ -2452,7 +2485,7 @@ class PushToTalkClient:
     def _add_phrase_correction_pair(self, wrong: str, right: str) -> None:
         path = self.config.phrase_corrections_path_expanded()
         path.parent.mkdir(parents=True, exist_ok=True)
-        data: Dict[str, Any] = {"exact": {}, "regex": []}
+        data: dict[str, Any] = {"exact": {}, "regex": []}
         if path.exists():
             try:
                 with path.open("r", encoding="utf-8") as handle:
@@ -2489,7 +2522,7 @@ class PushToTalkClient:
                 return
 
             path = self.config.phrase_corrections_path_expanded()
-            payload: Dict[str, Any] = {"exact": {}, "regex": []}
+            payload: dict[str, Any] = {"exact": {}, "regex": []}
             if path.exists():
                 try:
                     with path.open("r", encoding="utf-8") as handle:
@@ -2516,7 +2549,6 @@ class PushToTalkClient:
         except Exception as exc:
             logging.debug("Remote vocabulary sync skipped: %s", exc)
 
-
     def _load_snippets(self) -> None:
         with self._config_lock:
             path = self.config.snippets_path_expanded()
@@ -2524,7 +2556,7 @@ class PushToTalkClient:
         with self._snippets_lock:
             self._snippet_pairs = snippets
 
-    def _apply_snippets(self, text: str) -> Tuple[str, List[str]]:
+    def _apply_snippets(self, text: str) -> tuple[str, list[str]]:
         with self._snippets_lock:
             snippets = list(self._snippet_pairs)
         return apply_snippets(text, snippets)
@@ -2549,11 +2581,11 @@ class PushToTalkClient:
         capture_ms: int,
         mode: str,
         assistant_profile: str,
-        pipeline_cfg: Dict[str, Any],
-        meeting_session_id: Optional[str] = None,
+        pipeline_cfg: dict[str, Any],
+        meeting_session_id: str | None = None,
         partial_text: str = "",
     ) -> None:
-        event: Dict[str, Any] = {
+        event: dict[str, Any] = {
             "utterance_id": utterance_id,
             "mode": mode,
             "assistant_profile": assistant_profile,
@@ -2627,7 +2659,7 @@ class PushToTalkClient:
             corrections.append("post_dedupe:input")
             corrected_text = deduped_input
 
-        voice_commands_applied: List[str] = []
+        voice_commands_applied: list[str] = []
         if pipeline_cfg["voice_commands_enabled"] and mode in {
             "dictation",
             "journal",
@@ -2707,7 +2739,9 @@ class PushToTalkClient:
         if pipeline_cfg["model_profile"] != "verbatim":
             deduped_output = self._post_clean_dedupe(cleaned_text)
             if deduped_output != cleaned_text:
-                self._status("CLEANING", "Collapsed repeated words/phrases.", utterance_id)
+                self._status(
+                    "CLEANING", "Collapsed repeated words/phrases.", utterance_id
+                )
                 cleaned_text = deduped_output
 
             if mode in {"dictation", "journal", "meeting"}:
@@ -2715,7 +2749,9 @@ class PushToTalkClient:
                     polished_text = self._light_post_polish(cleaned_text)
                     if polished_text and polished_text != cleaned_text:
                         self._status(
-                            "CLEANING", "Applied light punctuation polish.", utterance_id
+                            "CLEANING",
+                            "Applied light punctuation polish.",
+                            utterance_id,
                         )
                         cleaned_text = polished_text
 
@@ -2917,9 +2953,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--meeting-session-chunk-seconds", type=int, default=None)
     parser.add_argument("--snippets-path", default=None)
     parser.add_argument("--hud-enabled", action="store_true", default=None)
-    parser.add_argument(
-        "--no-hud-enabled", dest="hud_enabled", action="store_false"
-    )
+    parser.add_argument("--no-hud-enabled", dest="hud_enabled", action="store_false")
     parser.add_argument("--hide-on-close", action="store_true", default=None)
     parser.add_argument("--audio-feedback", action="store_true", default=None)
     parser.add_argument(
@@ -2945,6 +2979,7 @@ def run_cli(args: argparse.Namespace) -> None:
     client.install_keyboard_hooks()
     quit_hotkey = (config.quit_hotkey or DEFAULT_QUIT_HOTKEY).strip().lower()
     quit_requested = threading.Event()
+
     def _request_quit() -> None:
         print(f"Quit hotkey pressed ({quit_hotkey}). Shutting down...")
         quit_requested.set()
