@@ -173,3 +173,31 @@ def test_apply_phrase_corrections_punctuation_split_regex() -> None:
     assert "VoicePaste" in text
     assert "Voice, Paste" not in text
     assert len(applied) == 1
+
+
+def test_curated_estate_vocabulary_and_preservation() -> None:
+    phrase_exact = [
+        ("cloudfare", "Cloudflare"),
+        ("grop", "Grok"),
+        ("solid coder", "Sonnet coder"),
+        ("metamuse", "MetaMuse"),
+        ("musecode", "MuseCode"),
+        ("c engine", "CEng"),
+        ("court code", "Claude Code"),
+        ("nukebox", "NucBox"),
+    ]
+    # Verify new mappings work
+    raw = "test grop and metamuse on cloudfare with solid coder using court code on nukebox"
+    out, applied = apply_phrase_corrections(raw, phrase_exact, [])
+    assert "Grok" in out
+    assert "MetaMuse" in out
+    assert "Cloudflare" in out
+    assert "Sonnet coder" in out
+    assert "Claude Code" in out
+    assert "NucBox" in out
+
+    # Verify model and models are never replaced or corrupted
+    raw_models = "which model should we use out of all available models"
+    out_models, applied_models = apply_phrase_corrections(raw_models, phrase_exact, [])
+    assert out_models == raw_models
+    assert len(applied_models) == 0
