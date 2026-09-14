@@ -218,6 +218,17 @@ pytest -q
 
 ---
 
+## 🏛️ Architecture Baseline & AI Agent Governance
+
+**VoicePaste is Ade's primary daily-driver input application.** To prevent regressions during maintenance and iteration, all AI coding assistants must observe these protocols:
+
+* **Operational Baseline & Specs:** Master architecture specifications, hardware topologies, and latency baselines are recorded in the Obsidian vault at `Projects/Voice-to-Text/VoicePaste-Baseline-2026-09.md`.
+* **Zero-Downtime Rule (Shadow Port 8771):** Model experiments or STT daemon changes on NucBox must be validated on shadow port `8771` before touching production port `8770`.
+* **Regression Test Gate:** All 107 unit tests (`pytest tests/`) must pass cleanly before any release or commit.
+* **Rollback Protection:** NucBox `rollback_stt.sh` and `stt.env.bak_live` must be preserved before applying daemon configuration changes.
+
+---
+
 ## 📄 Licence
 
 MIT — do whatever you like with it.
