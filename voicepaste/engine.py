@@ -2337,11 +2337,12 @@ class PushToTalkClient:
             return "pasted"
         return "clipboard_only"
 
-    def _build_initial_prompt(self, max_terms: int = 35) -> str:
+    def _build_initial_prompt(self, max_terms: int = 50) -> str:
         # Core default keywords — keeps prompt concise and well under Whisper's 224-token budget
         # to prevent prompt-echoing and token hallucinations.
         core_terms = [
             "VoicePaste",
+            "VoiceSpeak",
             "Whisper",
             "Faster-Whisper",
             "Ollama",
@@ -2370,6 +2371,18 @@ class PushToTalkClient:
             "Opus",
             "Copilot",
             "CEng",
+            "OpenCode",
+            "MoE",
+            "DeepSeek",
+            "Gemma",
+            "Nemotron",
+            "GPT-OSS",
+            "implementation plan",
+            "closeout",
+            "PiDrive",
+            "Omarchy",
+            "Hyprland",
+            "Herdr",
         ]
         terms = list(core_terms)
         with self._phrase_lock:

@@ -201,3 +201,62 @@ def test_curated_estate_vocabulary_and_preservation() -> None:
     out_models, applied_models = apply_phrase_corrections(raw_models, phrase_exact, [])
     assert out_models == raw_models
     assert len(applied_models) == 0
+
+
+def test_tuned_voice_logs_vocabulary_and_regex() -> None:
+    phrase_exact = [
+        ("tunemyvoicetospeak", "tune my VoicePaste"),
+        ("tune my voice to speak", "tune my VoicePaste"),
+        ("voicetospeak", "VoicePaste"),
+        ("voice to speak", "VoicePaste"),
+        ("inflammation plan", "implementation plan"),
+        ("runclose our skill", "run closeout skill"),
+        ("runcloseoutskill", "run closeout skill"),
+        ("close our skill", "closeout skill"),
+        ("sgt", "STT"),
+        ("pie hole", "Pi-hole"),
+        ("deep seat", "DeepSeek"),
+        ("deepseat", "DeepSeek"),
+        ("deepseat coder", "DeepSeek Coder"),
+        ("deep seat coder", "DeepSeek Coder"),
+        ("gdss120", "gpt-oss:120b"),
+        ("gdss 120", "gpt-oss:120b"),
+        ("assurelish", "assure this"),
+        ("open code", "OpenCode"),
+        ("inopencode", "in OpenCode"),
+        ("nutgrockbot", "not GrokBot"),
+        ("qwencoder", "QwenCoder"),
+        ("planche", "plan"),
+    ]
+    regex_rules = [
+        (re.compile(r"\btune\s*my\s*voice\s*(?:to\s*)?speak\b", re.IGNORECASE), "tune my VoicePaste"),
+        (re.compile(r"\bvoice\s*(?:to\s*)?speak\b", re.IGNORECASE), "VoicePaste"),
+        (re.compile(r"\binflammation\s+plan\b", re.IGNORECASE), "implementation plan"),
+        (re.compile(r"\b(?:run\s*)?close\s*out\s*skill\b", re.IGNORECASE), "run closeout skill"),
+    ]
+
+    out1, _ = apply_phrase_corrections("TuneMyVoiceToSpeak app from the logs", phrase_exact, regex_rules)
+    assert "tune my VoicePaste" in out1 or "VoicePaste" in out1
+
+    out2, _ = apply_phrase_corrections("I was speaking about my voice to speak app", phrase_exact, regex_rules)
+    assert "VoicePaste" in out2
+
+    out3, _ = apply_phrase_corrections("learned to start reading your inflammation plan which I never did before", phrase_exact, regex_rules)
+    assert "implementation plan" in out3
+    assert "inflammation plan" not in out3
+
+    out4, _ = apply_phrase_corrections("SGT is how I'm speaking to you now with deep seat coder", phrase_exact, regex_rules)
+    assert "STT" in out4
+    assert "DeepSeek Coder" in out4
+
+    out5, _ = apply_phrase_corrections("RunClose our skill and switch that would load the GDSS120", phrase_exact, regex_rules)
+    assert "run closeout skill" in out5
+    assert "gpt-oss:120b" in out5
+
+    out6, _ = apply_phrase_corrections("Assurelish before giving to Claude", phrase_exact, regex_rules)
+    assert "assure this" in out6.lower()
+
+    out7, _ = apply_phrase_corrections("check the pie hole stats in open code with qwencoder", phrase_exact, regex_rules)
+    assert "Pi-hole" in out7
+    assert "OpenCode" in out7
+    assert "QwenCoder" in out7

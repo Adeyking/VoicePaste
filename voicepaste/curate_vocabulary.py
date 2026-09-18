@@ -33,6 +33,25 @@ def curate_vocabulary_from_logs_and_inbox(
     scanned_inbox_notes = 0
     new_pairs: list[dict[str, str]] = []
 
+    COMMON_DICTIONARY_WORDS = {
+        "all", "and", "aid", "aids", "air", "arm", "art", "bad", "bag", "bar", "bed",
+        "big", "bit", "bob", "bog", "box", "boy", "bub", "bus", "but", "bye", "can",
+        "cap", "car", "cat", "cup", "cut", "day", "did", "die", "dog", "dos", "dry",
+        "due", "ear", "eat", "end", "eye", "far", "fat", "few", "fit", "fix", "fly",
+        "for", "fun", "gas", "get", "god", "gun", "guy", "had", "has", "hat", "her",
+        "hey", "him", "his", "hit", "hot", "how", "ice", "ill", "ink", "job", "joy",
+        "key", "kid", "kick", "law", "lay", "leg", "let", "lie", "lip", "log", "lot",
+        "low", "mad", "man", "map", "may", "men", "mid", "mix", "mom", "mud", "nah",
+        "net", "new", "nod", "non", "nor", "not", "now", "nun", "nut", "odd", "off",
+        "oil", "old", "one", "our", "out", "own", "pan", "pay", "pen", "per", "pet",
+        "pie", "pin", "pit", "pop", "pot", "pro", "put", "rag", "ram", "ran", "raw",
+        "red", "rib", "rid", "rip", "rob", "rod", "row", "rub", "run", "sad", "saw",
+        "say", "sea", "see", "set", "sew", "she", "shy", "sin", "sir", "sit", "six",
+        "ski", "sky", "son", "spy", "sub", "sue", "sum", "sun", "tag", "tap", "tax",
+        "tea", "the", "tie", "tin", "tip", "toe", "too", "top", "toy", "try", "two",
+        "use", "van", "via", "war", "was", "way", "wet", "who", "why", "win", "yes",
+        "yet", "you", "zoo", "idea", "sharp", "wan", "pick", "plan", "gate",
+    }
     STOP_WORDS = {
         "a",
         "an",
@@ -96,10 +115,13 @@ def curate_vocabulary_from_logs_and_inbox(
         r_clean = right.strip()
         if not w_clean or not r_clean or w_clean == r_clean:
             return
-        if len(w_clean) < 2 or len(r_clean) < 2:
+        if len(w_clean) < 2 or len(r_clean) < 2 or len(w_clean) > 30:
+            return
+        # Reject repeated single-character noise (e.g. QQQQQ...)
+        if len(set(w_clean.lower())) <= 1:
             return
         key = w_clean.lower()
-        if key in STOP_WORDS and key == r_clean.lower():
+        if key in STOP_WORDS or key in COMMON_DICTIONARY_WORDS:
             return
         if key not in existing_keys:
             exact_map[key] = r_clean
