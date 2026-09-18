@@ -133,6 +133,87 @@ USER32.SetForegroundWindow.argtypes = [wintypes.HWND]
 USER32.SetForegroundWindow.restype = wintypes.BOOL
 USER32.GetAsyncKeyState.argtypes = [wintypes.INT]
 USER32.GetAsyncKeyState.restype = wintypes.SHORT
+USER32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+USER32.GetWindowTextLengthW.restype = wintypes.INT
+USER32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, wintypes.INT]
+USER32.GetWindowTextW.restype = wintypes.INT
+
+
+def get_window_title_from_hwnd(hwnd: Any) -> str:
+    if not hwnd:
+        return ""
+    try:
+        length = USER32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return ""
+        buf = ctypes.create_unicode_buffer(length + 1)
+        USER32.GetWindowTextW(hwnd, buf, length + 1)
+        return str(buf.value or "").strip()
+    except Exception:
+        return ""
+
+
+def extract_window_context(title: str | None, max_terms: int = 3) -> list[str]:
+    """Extract clean, high-value project or file keywords from an active window title.
+    Strips application suffixes (VS Code, Obsidian, browsers) and punctuation noise.
+    """
+    if not title or not isinstance(title, str):
+        return []
+
+    clean = title.strip()
+    if not clean:
+        return []
+
+    # Strip common application names (both trailing and standalone)
+    APP_PATTERNS = [
+        r"(?:^\s*|\s*-\s*)Visual Studio Code.*$",
+        r"(?:^\s*|\s*-\s*)Code - OSS.*$",
+        r"(?:^\s*|\s*-\s*)Obsidian\s*(?:v[0-9\.]+)?.*$",
+        r"(?:^\s*|\s*-\s*)Google Chrome.*$",
+        r"(?:^\s*|\s*-\s*)Brave.*$",
+        r"(?:^\s*|\s*-\s*)Mozilla Firefox.*$",
+        r"(?:^\s*|\s*-\s*)Microsoft Edge.*$",
+        r"(?:^\s*|\s*-\s*)Command Prompt.*$",
+        r"(?:^\s*|\s*-\s*)PowerShell.*$",
+        r"(?:^\s*|\s*-\s*)Alacritty.*$",
+    ]
+    for pat in APP_PATTERNS:
+        clean = re.sub(pat, "", clean, flags=re.IGNORECASE).strip()
+
+    if not clean:
+        return []
+
+    # Split on common title delimiters: ' - ', ' — ', ' | ', ' • ', '/'
+    parts = re.split(r"\s+[-—|•/:]\s+", clean)
+    tokens: list[str] = []
+    GENERIC_IGNORE = {
+        "untitled", "new", "tab", "document", "workspace", "window",
+        "chrome", "edge", "firefox", "obsidian", "code", "bash", "cmd",
+        "powershell", "home", "default",
+    }
+
+    for p in parts:
+        candidate = p.strip().strip("'\"[](){}#*")
+        # If candidate is a filename like app.py or notes.md, keep the full filename
+        if "." in candidate and len(candidate.split(".")) == 2:
+            stem = candidate.split(".")[0].strip()
+            if len(stem) >= 3 and stem.lower() not in GENERIC_IGNORE:
+                if candidate not in tokens:
+                    tokens.append(candidate)
+                continue
+
+        # Extract clean alphanumeric / hyphen / underscore words
+        subwords = re.findall(r"[A-Za-z0-9_-]{3,35}", candidate)
+        for w in subwords:
+            if (
+                w.lower() not in GENERIC_IGNORE
+                and w not in tokens
+                and not w.isdigit()
+                and len(set(w.lower())) > 1
+            ):
+                tokens.append(w)
+
+    return tokens[:max_terms]
 
 
 def _safe_bool(value: Any, default: bool) -> bool:
@@ -903,6 +984,7 @@ class PushToTalkClient:
         self._stream = None
         self._frames: list[np.ndarray] = []
         self._target_hwnd = None
+        self._active_window_context: list[str] = []
         self._record_start_monotonic = 0.0
         self._mode = config.mode_default
         self._assistant_profile = "neutral"
@@ -1548,6 +1630,8 @@ class PushToTalkClient:
 
     def start_recording(self) -> None:
         target_hwnd = USER32.GetForegroundWindow()
+        raw_title = get_window_title_from_hwnd(target_hwnd)
+        active_context = extract_window_context(raw_title)
         with self._lock:
             if self._meeting_session_active:
                 self._status(
@@ -1562,6 +1646,7 @@ class PushToTalkClient:
             self._recording = True
 
             self._target_hwnd = target_hwnd
+            self._active_window_context = active_context
             self._record_start_monotonic = time.perf_counter()
             self._current_recording_id = self._utterance_counter + 1
             self._partial_stabilizers[self._current_recording_id] = (
@@ -2384,7 +2469,15 @@ class PushToTalkClient:
             "Hyprland",
             "Herdr",
         ]
-        terms = list(core_terms)
+        terms: list[str] = []
+        with self._lock:
+            ctx = list(self._active_window_context)
+        for c in ctx:
+            if c not in terms:
+                terms.append(c)
+        for t in core_terms:
+            if t not in terms:
+                terms.append(t)
         with self._phrase_lock:
             for _, right in self._phrase_exact:
                 clean_right = (right or "").strip()
