@@ -232,7 +232,7 @@ def test_tuned_voice_logs_vocabulary_and_regex() -> None:
         (re.compile(r"\btune\s*my\s*voice\s*(?:to\s*)?speak\b", re.IGNORECASE), "tune my VoicePaste"),
         (re.compile(r"\bvoice\s*(?:to\s*)?speak\b", re.IGNORECASE), "VoicePaste"),
         (re.compile(r"\binflammation\s+plan\b", re.IGNORECASE), "implementation plan"),
-        (re.compile(r"\b(?:run\s*)?close\s*out\s*skill\b", re.IGNORECASE), "run closeout skill"),
+        (re.compile(r"\bclose\s*out\s*skill\b", re.IGNORECASE), "closeout skill"),
     ]
 
     out1, _ = apply_phrase_corrections("TuneMyVoiceToSpeak app from the logs", phrase_exact, regex_rules)
@@ -260,3 +260,7 @@ def test_tuned_voice_logs_vocabulary_and_regex() -> None:
     assert "Pi-hole" in out7
     assert "OpenCode" in out7
     assert "QwenCoder" in out7
+
+    out8, _ = apply_phrase_corrections("you can run the Closeout skill", phrase_exact, regex_rules)
+    assert "run the run" not in out8
+    assert "closeout skill" in out8.lower()

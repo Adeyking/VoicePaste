@@ -126,6 +126,7 @@ MODEL_HOTKEYS = {
     "quality": "ctrl+alt+8",
 }
 DEFAULT_QUIT_HOTKEY = "ctrl+alt+q"
+VOCAB_SAVE_HOTKEY = "ctrl+alt+w"
 
 USER32 = ctypes.windll.user32
 USER32.GetForegroundWindow.restype = wintypes.HWND
@@ -214,6 +215,38 @@ def extract_window_context(title: str | None, max_terms: int = 3) -> list[str]:
                 tokens.append(w)
 
     return tokens[:max_terms]
+
+
+def get_clipboard_candidate_terms(max_terms: int = 2) -> list[str]:
+    """Safely inspects the OS clipboard for candidate technical words or project names without blocking.
+    Caps inspection to 500 chars and enforces sub-30ms execution.
+    """
+    try:
+        raw = pyperclip.paste()
+        if not raw or not isinstance(raw, str):
+            return []
+        raw = raw.strip()
+        if len(raw) > 500 or len(raw) < 3:
+            return []
+
+        from .curate_vocabulary import COMMON_DICTIONARY_WORDS, STOP_WORDS
+        tokens: list[str] = []
+        for w in re.findall(r"[A-Za-z0-9_-]{3,35}", raw):
+            clean_w = w.strip("-_")
+            if (
+                len(clean_w) >= 3
+                and clean_w.lower() not in STOP_WORDS
+                and clean_w.lower() not in COMMON_DICTIONARY_WORDS
+                and not clean_w.isdigit()
+                and len(set(clean_w.lower())) > 1
+                and clean_w not in tokens
+            ):
+                tokens.append(clean_w)
+                if len(tokens) >= max_terms:
+                    break
+        return tokens
+    except Exception:
+        return []
 
 
 def _safe_bool(value: Any, default: bool) -> bool:
@@ -986,6 +1019,7 @@ class PushToTalkClient:
         self._target_hwnd = None
         self._active_window_context: list[str] = []
         self._record_start_monotonic = 0.0
+        self._runaway_guardrail_timer = None
         self._mode = config.mode_default
         self._assistant_profile = "neutral"
         self._executor = ThreadPoolExecutor(
@@ -1232,6 +1266,7 @@ class PushToTalkClient:
             "profile_neutral": PROFILE_HOTKEYS["neutral"],
             "model_fast": MODEL_HOTKEYS["fast"],
             "model_quality": MODEL_HOTKEYS["quality"],
+            "vocab_save": VOCAB_SAVE_HOTKEY,
         }
 
     def get_stats(self) -> dict[str, Any]:
@@ -1439,6 +1474,11 @@ class PushToTalkClient:
                 MODEL_HOTKEYS["quality"], lambda: self.set_model_profile("quality")
             )
         )
+        self._hotkey_refs.append(
+            keyboard.add_hotkey(
+                VOCAB_SAVE_HOTKEY, lambda: self.quick_save_clipboard_vocabulary()
+            )
+        )
         self._hotkeys_registered = True
 
     def install_keyboard_hooks(self) -> None:
@@ -1632,6 +1672,12 @@ class PushToTalkClient:
         target_hwnd = USER32.GetForegroundWindow()
         raw_title = get_window_title_from_hwnd(target_hwnd)
         active_context = extract_window_context(raw_title)
+        clipboard_candidates = get_clipboard_candidate_terms(max_terms=2)
+        combined_context = list(active_context)
+        for c in clipboard_candidates:
+            if c not in combined_context:
+                combined_context.append(c)
+
         with self._lock:
             if self._meeting_session_active:
                 self._status(
@@ -1646,7 +1692,7 @@ class PushToTalkClient:
             self._recording = True
 
             self._target_hwnd = target_hwnd
-            self._active_window_context = active_context
+            self._active_window_context = combined_context
             self._record_start_monotonic = time.perf_counter()
             self._current_recording_id = self._utterance_counter + 1
             self._partial_stabilizers[self._current_recording_id] = (
@@ -1663,6 +1709,14 @@ class PushToTalkClient:
                     device=None,
                 )
                 self._stream.start()
+                if self._runaway_guardrail_timer is not None:
+                    try:
+                        self._runaway_guardrail_timer.cancel()
+                    except Exception:
+                        pass
+                self._runaway_guardrail_timer = threading.Timer(120.0, self._auto_stop_guardrail)
+                self._runaway_guardrail_timer.daemon = True
+                self._runaway_guardrail_timer.start()
             except Exception as exc:
                 self._recording = False
                 self._stream = None
@@ -1676,8 +1730,77 @@ class PushToTalkClient:
             )
             self._partial_thread.start()
 
+    def _auto_stop_guardrail(self) -> None:
+        with self._lock:
+            if not self._recording:
+                return
+        self._status("WARNING", "Recording reached 120s limit; auto-stopping.")
+        self.stop_recording()
+
+    def quick_save_clipboard_vocabulary(self) -> None:
+        """Save the current text from clipboard to the central NucBox vocabulary API atomically."""
+        try:
+            raw = pyperclip.paste()
+            if not raw or not isinstance(raw, str):
+                self._status("WARNING", "Clipboard is empty; nothing to save.")
+                return
+            term = raw.strip()
+            if not term:
+                self._status("WARNING", "Clipboard text is blank.")
+                return
+            if len(term) > 50 or "\n" in term or "\r" in term:
+                self._status("WARNING", "Text must be a single word/phrase (<= 50 chars).")
+                return
+
+            key = term.lower()
+            with self._phrase_lock:
+                self._phrase_exact = [(k, v) for k, v in self._phrase_exact if k != key]
+                self._phrase_exact.append((key, term))
+
+            try:
+                cfg_path = Path(self.config.phrase_corrections_path).expanduser()
+                if cfg_path.is_file():
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if "exact" not in data:
+                        data["exact"] = {}
+                    data["exact"][key] = term
+                    tmp = cfg_path.with_suffix(".tmp")
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    os.replace(tmp, cfg_path)
+            except Exception as exc:
+                logging.getLogger("voicepaste").warning("Local phrase save error: %s", exc)
+
+            def _post_central():
+                try:
+                    url = self.config.stt_url.rstrip("/")
+                    if url.endswith("/transcribe") or url.endswith("/transcribe_stream"):
+                        url = url.rsplit("/", 1)[0]
+                    vocab_url = f"{url}/api/v1/vocabulary"
+                    headers = {"Content-Type": "application/json"}
+                    if self.config.stt_bearer_token:
+                        headers["Authorization"] = f"Bearer {self.config.stt_bearer_token}"
+                    payload = json.dumps({"original": key, "replacement": term}).encode("utf-8")
+                    req = urllib.request.Request(vocab_url, data=payload, headers=headers, method="POST")
+                    with urllib.request.urlopen(req, timeout=3.0) as resp:
+                        pass
+                except Exception as exc:
+                    logging.getLogger("voicepaste").warning("Central vocabulary POST failed: %s", exc)
+
+            threading.Thread(target=_post_central, daemon=True).start()
+            self._status("SAVED", f"Vocabulary added: {term}")
+        except Exception as exc:
+            self._status("ERROR", f"Quick save failed: {exc}")
+
     def stop_recording(self) -> None:
         self._partial_stop_event.set()
+        if self._runaway_guardrail_timer is not None:
+            try:
+                self._runaway_guardrail_timer.cancel()
+            except Exception:
+                pass
+            self._runaway_guardrail_timer = None
         with self._lock:
             if not self._recording:
                 return
@@ -2427,7 +2550,6 @@ class PushToTalkClient:
         # to prevent prompt-echoing and token hallucinations.
         core_terms = [
             "VoicePaste",
-            "VoiceSpeak",
             "Whisper",
             "Faster-Whisper",
             "Ollama",

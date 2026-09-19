@@ -62,6 +62,7 @@ class TrayHost:
         keys = self.client.get_hotkey_bindings()
         return pystray.Menu(
             item(lambda _: f"Push-to-talk: {keys['ptt']}", None, enabled=False),
+            item(lambda _: f"Quick-Add Word: {keys.get('vocab_save', 'ctrl+alt+w')} (save clipboard)", None, enabled=False),
             item(
                 lambda _: (
                     f"Mode: {keys['mode_dictation']}/{keys['mode_assistant']}/"
