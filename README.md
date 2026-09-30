@@ -1,25 +1,28 @@
 # 🎙️ VoicePaste (Desktop)
 
-**System-wide push-to-talk dictation for Windows — local, private, and fast.**
+**System-wide push-to-talk dictation for Windows: local, private, and fast.**
 
 VoicePaste lets you hold a hotkey, speak, and have your words transcribed and cleaned up by a local AI model, then pasted wherever your cursor is. No cloud required. Your audio never leaves your network.
 
-> Inspired by [Wispr Flow](https://www.wispr.ai/) — built entirely on open-source local AI.
+> Inspired by [Wispr Flow](https://www.wispr.ai/), built entirely on open-source local AI.
 
 ---
 
 ## ✨ Features
 
-- **Push-to-talk** — hold `Ctrl + Numpad 0` to record, release to transcribe and paste
-- **Live preview** — text appears on screen as you speak (partial transcript mode)
-- **Local AI cleanup** — a local LLM (via [Ollama](https://ollama.com/)) fixes grammar and removes filler words before pasting
-- **Fast and Quality profiles** — swap between a quick small model and a higher-quality model on the fly
-- **Voice commands** — say _"new paragraph"_, _"scratch that"_, _"question mark"_ etc.
-- **Multiple modes** — Dictation, Assistant, Journal, and Meeting transcription
-- **Meeting mode** — continuous transcription saved to a Markdown file automatically
-- **System tray** — warm state badge, live stats, settings window, all from the taskbar
-- **Warm state tracking** — know at a glance if your model is `[warm]`, `[warming...]`, or `[cold]`
-- **Privacy-first** — all processing happens on your LAN; nothing touches the internet by default
+* **Push-to-talk**: hold `Ctrl + Alt` to record, release to transcribe and paste
+* **Live preview**: text appears on screen as you speak (partial transcript mode)
+* **Local AI cleanup**: a local LLM (via [Ollama](https://ollama.com/)) fixes grammar and removes filler words before pasting
+* **Fast and Quality profiles**: swap between a quick small model and a higher-quality model on the fly
+* **Quick-add vocabulary (`Ctrl + Alt + W`)**: capture highlighted or clipboard terms straight into your exact dictionary and sync across devices
+* **Active-window context injection**: reads the active window title to seed Whisper with relevant project keywords and terminology
+* **Buffer guardrail**: automatic 120-second recording cutoff prevents runaway memory use if hotkeys stick
+* **Voice commands**: say _"new paragraph"_, _"scratch that"_, _"question mark"_, etc.
+* **Multiple modes**: Dictation, Assistant, Journal, and Meeting transcription
+* **Meeting mode**: continuous transcription saved to a Markdown file automatically
+* **System tray**: warm state badge, live stats, settings window, all from the taskbar
+* **Warm state tracking**: know at a glance if your model is `[warm]`, `[warming...]`, or `[cold]`
+* **Privacy-first**: all processing happens on your LAN; nothing touches the internet by default
 
 ---
 
@@ -69,38 +72,38 @@ Then edit `voicepaste.config.json` and set your server addresses:
 A microphone icon will appear in your system tray.
 
 **4. Speak!**
-Hold `Ctrl + Alt`, say something, release — your words appear where your cursor is.
+Hold `Ctrl + Alt`, say something, release: your words appear where your cursor is.
 
 ---
 
 ## ⌨️ Hotkeys
 
-| Hotkey                 | Action                     |
-| ---------------------- | -------------------------- |
-| Hold `Ctrl + Alt`      | Record (Push-To-Talk)      |
-| Release                | Transcribe + paste         |
-| `Ctrl+Alt+1`           | Dictation mode             |
-| `Ctrl+Alt+2`           | Assistant mode             |
-| `Ctrl+Alt+3`           | Journal mode               |
-| `Ctrl+Alt+9`           | Meeting mode               |
-| `Ctrl+Alt+7`           | Fast model profile         |
-| `Ctrl+Alt+8`           | Quality model profile      |
-| `Ctrl+Alt+4`           | Assistant profile: Email   |
-| `Ctrl+Alt+5`           | Assistant profile: Chat    |
-| `Ctrl+Alt+6`           | Assistant profile: Neutral |
+| Hotkey                 | Action                                                 |
+| ---------------------- | ------------------------------------------------------ |
+| Hold `Ctrl + Alt`      | Record (Push-To-Talk)                                  |
+| Release                | Transcribe + paste                                     |
+| `Ctrl+Alt+W`           | Quick-add term (save clipboard to vocabulary)          |
+| `Ctrl+Alt+1`           | Dictation mode                                         |
+| `Ctrl+Alt+2`           | Assistant mode                                         |
+| `Ctrl+Alt+3`           | Journal mode                                           |
+| `Ctrl+Alt+9`           | Meeting mode                                           |
+| `Ctrl+Alt+7`           | Fast model profile                                     |
+| `Ctrl+Alt+8`           | Quality model profile                                  |
+| `Ctrl+Alt+4`           | Assistant profile: Email                               |
+| `Ctrl+Alt+5`           | Assistant profile: Chat                                |
+| `Ctrl+Alt+6`           | Assistant profile: Neutral                             |
 
 ---
 
 ## 🗣️ Voice Commands
 
-Say these while dictating — they are processed before pasting:
+Say these while dictating: they are processed before pasting:
 
 | Say                         | Result                                  |
 | --------------------------- | --------------------------------------- |
 | `"new paragraph"`           | Inserts a blank line                    |
 | `"new line"`                | Inserts a line break                    |
 | `"scratch that"`            | Deletes the last sentence               |
-| `"actually"`                | Deletes the last sentence and continues |
 | `"question mark"`           | Inserts `?`                             |
 | `"period"`                  | Inserts `.`                             |
 | `"comma"`                   | Inserts `,`                             |
@@ -116,32 +119,33 @@ The second line in the tray menu shows:
 dictation  |  fast (qwen2.5:3b) [warm]
 ```
 
-- **Mode** — current input mode
-- **Profile (model)** — active model profile and model name
-- **Warm state** — `[warm]` / `[warming...]` / `[cold]` / `[warm error]`
-- **Meeting indicator** — `meeting: 14s` (elapsed seconds in current chunk)
+* **Mode**: current input mode
+* **Profile (model)**: active model profile and model name
+* **Warm state**: `[warm]` / `[warming...]` / `[cold]` / `[warm error]`
+* **Meeting indicator**: `meeting: 14s` (elapsed seconds in current chunk)
 
 ---
 
 ## ⚙️ Configuration
 
-Copy `voicepaste.config.example.json` → `voicepaste.config.json` and edit as needed.
-The Settings window (tray → Open → Settings) lets you change most settings with a UI.
+Copy `voicepaste.config.example.json` to `voicepaste.config.json` and edit as needed.
+The Settings window (tray -> Open -> Settings) lets you change most settings with a UI.
 
 Key settings:
 
-| Key                          | Default       | Description                              |
-| ---------------------------- | ------------- | ---------------------------------------- |
-| `STT_URL`                    | —             | Your Whisper STT server URL              |
-| `OLLAMA_URL`                 | —             | Your Ollama server URL                   |
-| `MODEL_PROFILE`              | `fast`        | `fast` or `quality`                      |
-| `FAST_MODEL`                 | `qwen2.5:3b`  | Model used for fast cleanup              |
-| `QUALITY_MODEL`              | `phi4:latest` | Model used for quality cleanup           |
-| `OLLAMA_KEEP_ALIVE`          | `20m`         | How long Ollama keeps model in VRAM      |
-| `PARTIAL_TRANSCRIPT_ENABLED` | `true`        | Show live text preview while speaking    |
-| `VOICE_COMMANDS_ENABLED`     | `true`        | Enable spoken commands                   |
-| `WARMUP_ENABLED`             | `true`        | Auto-warm model on profile selection     |
-| `CLOUD_FALLBACK_ENABLED`     | `false`       | Allow fallback to cloud model on timeout |
+| Key                          | Default        | Description                              |
+| ---------------------------- | -------------- | ---------------------------------------- |
+| `STT_URL`                    | `None`         | Your Whisper STT server URL              |
+| `OLLAMA_URL`                 | `None`         | Your Ollama server URL                   |
+| `MODEL_PROFILE`              | `fast`         | `fast` or `quality`                      |
+| `FAST_MODEL`                 | `qwen2.5:3b`   | Model used for fast cleanup              |
+| `QUALITY_MODEL`              | `phi4:latest`  | Model used for quality cleanup           |
+| `OLLAMA_KEEP_ALIVE`          | `20m`          | How long Ollama keeps model in VRAM      |
+| `PARTIAL_TRANSCRIPT_ENABLED` | `true`         | Show live text preview while speaking    |
+| `VOICE_COMMANDS_ENABLED`     | `true`         | Enable spoken commands                   |
+| `WARMUP_ENABLED`             | `true`         | Auto-warm model on profile selection     |
+| `CLOUD_FALLBACK_ENABLED`     | `false`        | Allow fallback to cloud model on timeout |
+| `MAX_RECORDING_SECONDS`      | `120`          | Guardrail cutoff for stuck hotkeys       |
 
 ### Phrase corrections
 
@@ -187,18 +191,18 @@ All transcripts are saved automatically to Markdown files:
 
 **Hotkeys not working?**
 
-- Run VoicePaste as Administrator
-- Make sure Num Lock is on for numpad hotkeys
-- Restart via `.\scripts\voice_stop.ps1` then `.\scripts\run_tray.ps1`
+* Run VoicePaste as Administrator
+* Make sure Num Lock is on for numpad hotkeys
+* Restart via `.\scripts\voice_stop.ps1` then `.\scripts\run_tray.ps1`
 
 **Model shows `[cold]` immediately after warmup?**
 
-- Check Ollama is running and the model name in config exactly matches the pulled model name (e.g. `qwen2.5:3b`)
+* Check Ollama is running and the model name in config exactly matches the pulled model name (e.g. `qwen2.5:3b`)
 
 **Text pasted without cleanup?**
 
-- The local model timed out; VoicePaste pastes raw text immediately and continues refining in the background
-- The improved version is copied to your clipboard automatically when ready (tray notification will appear)
+* The local model timed out; VoicePaste pastes raw text immediately and continues refining in the background
+* The improved version is copied to your clipboard automatically when ready (tray notification will appear)
 
 **Diagnostics:**
 
@@ -218,17 +222,16 @@ pytest -q
 
 ---
 
-## 🏛️ Architecture Baseline & AI Agent Governance
+## 🏛️ Architecture & Reliability Standards
 
-**VoicePaste is Ade's primary daily-driver input application.** To prevent regressions during maintenance and iteration, all AI coding assistants must observe these protocols:
+VoicePaste is designed for rock-solid daily-driver input with zero tolerance for regressions. Contributors and maintenance agents should observe these operational guidelines:
 
-* **Operational Baseline & Specs:** Master architecture specifications, hardware topologies, and latency baselines are recorded in the Obsidian vault at `Projects/Voice-to-Text/VoicePaste-Baseline-2026-09.md`.
-* **Zero-Downtime Rule (Shadow Port 8771):** Model experiments or STT daemon changes on NucBox must be validated on shadow port `8771` before touching production port `8770`.
-* **Regression Test Gate:** All 107 unit tests (`pytest tests/`) must pass cleanly before any release or commit.
-* **Rollback Protection:** NucBox `rollback_stt.sh` and `stt.env.bak_live` must be preserved before applying daemon configuration changes.
+* **Zero-Downtime Verification:** Test model experiments, speech-to-text daemons, or inference parameters on an isolated staging port before applying to production.
+* **Regression Test Gate:** Ensure the full test suite (`pytest tests/`) passes cleanly before creating pull requests or releases.
+* **Rollback Protection:** Maintain backup environment configs and rollback scripts before modifying server-side inference or vocabulary daemon settings.
 
 ---
 
 ## 📄 Licence
 
-MIT — do whatever you like with it.
+MIT: do whatever you like with it.
