@@ -1,0 +1,112 @@
+#!/bin/bash
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"
+# voicepaste - dictate into the focused window using a local Whisper STT service.
+#
+# Toggle: first invocation starts recording, second stops it, transcribes, and
+# types the result at the cursor. Bound to SUPER + CTRL + X in window manager.
+#
+# Config: ~/.config/voicepaste/env  (STT_URL, STT_BEARER_TOKEN, STT_LANGUAGE)
+
+set -uo pipefail
+
+STT_URL=${STT_URL:-http://localhost:8770}
+STT_LANGUAGE=${STT_LANGUAGE:-en}
+MAX_SECONDS=${MAX_SECONDS:-120}
+
+config=$HOME/.config/voicepaste/env
+[[ -f $config ]] && source "$config"
+
+state_dir=${XDG_RUNTIME_DIR:-/tmp}/voicepaste
+wav=$state_dir/capture.wav
+pidfile=$state_dir/record.pid
+mkdir -p "$state_dir"
+
+notify() { notify-send -a VoicePaste -t "${3:-3000}" "$1" "${2:-}"; }
+
+deliver() {
+  # Type at the cursor; fall back to the clipboard when compositor refuses.
+  if ! wtype -- "$1" 2>/dev/null; then
+    printf '%s' "$1" | wl-copy
+    notify "Copied to clipboard" "Typing failed, paste with SUPER + V or Ctrl + V"
+  fi
+}
+
+start_recording() {
+  rm -f "$wav"
+  timeout -s INT "$MAX_SECONDS" \
+    pw-record --rate 16000 --channels 1 --format s16 "$wav" &
+  echo $! >"$pidfile"
+  notify "Recording" "Press hotkey again to transcribe" 2000
+}
+
+stop_and_transcribe() {
+  local pid
+  pid=$(<"$pidfile")
+  rm -f "$pidfile"
+
+  # SIGINT lets pw-record finalise the WAV header; SIGTERM would truncate it.
+  kill -INT "$pid" 2>/dev/null
+  while kill -0 "$pid" 2>/dev/null; do sleep 0.05; done
+
+  if [[ ! -s $wav ]]; then
+    notify "Nothing recorded" "No audio captured from the microphone"
+    return 1
+  fi
+
+  notify "Transcribing" "" 1500
+
+  # Trim trailing room silence (conservative -50dB threshold with 250ms safety cushion)
+  local upload_wav="$wav"
+  local trimmed_wav="$state_dir/trimmed.wav"
+  if command -v ffmpeg >/dev/null 2>&1; then
+    if ffmpeg -y -v error -i "$wav" -af "silenceremove=stop_periods=1:stop_duration=0.3:stop_threshold=-50dB,apad=pad_dur=0.25" "$trimmed_wav" 2>/dev/null && [[ -s "$trimmed_wav" ]]; then
+      upload_wav="$trimmed_wav"
+    fi
+  fi
+
+  local response text
+  response=$(curl -sS --max-time 120 \
+    -H "Authorization: Bearer ${STT_BEARER_TOKEN:-}" \
+    -F "file=@$upload_wav;type=audio/wav" \
+    -F "language=$STT_LANGUAGE" \
+    "$STT_URL/transcribe" 2>&1)
+  rm -f "$trimmed_wav" "$wav"
+
+  if [[ -z $response ]] || ! text=$(jq -re '.text' <<<"$response" 2>/dev/null); then
+    notify "STT failed" "${response:0:200}" 6000
+    return 1
+  fi
+
+  # Clean whitespace and apply word-bounded filler polish & stutter removal
+  text=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<<"$text")
+  if [[ -n $text ]]; then
+    text=$(python3 -c '
+import sys, re
+t = sys.stdin.read().strip()
+t = re.sub(r"\b(?i:um|uh|er|ah)\b[,\s]*", "", t)
+t = re.sub(r"\b(\w+)[,\s]+\1\b", r"\1", t, flags=re.IGNORECASE)
+t = re.sub(r"\s+", " ", t).strip()
+print(t, end="")
+' <<<"$text" 2>/dev/null || printf '%s' "$text")
+  fi
+
+  if [[ -z $text ]]; then
+    notify "Nothing heard" "The recording transcribed to an empty string"
+    return 1
+  fi
+
+  # Record to local rolling 14-day transcript log
+  local log_dir="$HOME/.local/state/voicepaste"
+  mkdir -p "$log_dir"
+  printf '[%s] %s\n' "$(date +'%Y-%m-%d %H:%M:%S')" "$text" >> "$log_dir/voicepaste-$(date +'%Y-%m-%d').log"
+  find "$log_dir" -name "voicepaste-*.log" -mtime +14 -delete 2>/dev/null || true
+
+  deliver "$text"
+}
+
+if [[ -f $pidfile ]] && kill -0 "$(<"$pidfile")" 2>/dev/null; then
+  stop_and_transcribe
+else
+  rm -f "$pidfile"
+  start_recording
+fi
