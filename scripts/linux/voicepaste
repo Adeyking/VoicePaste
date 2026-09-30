@@ -97,9 +97,11 @@ print(t, end="")
 
   # Record to local rolling 14-day transcript log
   local log_dir="$HOME/.local/state/voicepaste"
-  mkdir -p "$log_dir"
+  local zzdelete_dir="$HOME/ZZDelete/voicepaste"
+  mkdir -p "$log_dir" "$zzdelete_dir"
+  [[ -f "$log_dir/.last_tuned_checkpoint" ]] || date +'%Y-%m-%d %H:%M:%S' > "$log_dir/.last_tuned_checkpoint"
   printf '[%s] %s\n' "$(date +'%Y-%m-%d %H:%M:%S')" "$text" >> "$log_dir/voicepaste-$(date +'%Y-%m-%d').log"
-  find "$log_dir" -name "voicepaste-*.log" -mtime +14 -delete 2>/dev/null || true
+  find "$log_dir" -name "voicepaste-*.log" -mtime +14 -exec mv -t "$zzdelete_dir" {} + 2>/dev/null || true
 
   deliver "$text"
 }

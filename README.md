@@ -220,12 +220,29 @@ Create a JSON file at `SNIPPETS_PATH`:
 
 ---
 
-## 📁 Transcript Storage
+## 📁 Transcript Storage & Lifecycle
 
 All transcripts are saved automatically:
 
-* **Linux**: Saved to rolling 14-day logs in `~/.local/state/voicepaste/voicepaste-YYYY-MM-DD.log`.
+* **Linux**: Saved to daily logs in `~/.local/state/voicepaste/voicepaste-YYYY-MM-DD.log`.
 * **Windows**: Saved to Markdown files in `<VOICE_PASTE_ROOT>\inbox\YYYY-MM-DD.md` (Dictation/Assistant), `<VOICE_PASTE_ROOT>\journal\YYYY-MM-DD.md` (Journal), or `<VOICE_PASTE_ROOT>\meetings\YYYY-MM-DD.md` (Meeting).
+* **Safe 14-Day Archival**: Files older than 14 days are automatically relocated to `~/ZZDelete/voicepaste/` rather than hard-deleted, keeping your recent dictation history accessible as a safety net.
+
+---
+
+## 🌾 Transcript Auditing & Checkpoints
+
+To audit spoken mishearings and tune your vocabulary without re-checking already-reviewed text, use `voicepaste-harvest`:
+
+```bash
+# Preview fresh utterances recorded since your last review:
+voicepaste-harvest --dry-run
+
+# Review fresh utterances and advance your checkpoint bookmark:
+voicepaste-harvest --advance
+```
+
+VoicePaste maintains a `.last_tuned_checkpoint` timestamp file so you always know where your last audit ended.
 
 ---
 

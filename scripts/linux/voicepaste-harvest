@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""
+voicepaste-harvest: Checkpoint-aware transcript auditor and safe 14-day archival sweep.
+Reads utterances spoken since .last_tuned_checkpoint, surfaces un-audited text,
+and safely relocates logs older than 14 days to ~/ZZDelete/voicepaste/.
+"""
+
+import argparse
+import os
+import re
+import shutil
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+# Match desktop: [YYYY-MM-DD HH:MM:SS] Text
+DESKTOP_LOG_RE = re.compile(r"^\[(?P<ts>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\]\s+(?P<text>.+)$")
+# Match server: YYYY-MM-DD HH:MM:SS [LEVEL] [Text] (duration)
+SERVER_LOG_RE = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+\[.*?\]\s+\[(?P<text>.*?)\]")
+
+
+def parse_timestamp(ts_str: str) -> datetime:
+    return datetime.strptime(ts_str.strip(), "%Y-%m-%d %H:%M:%S")
+
+
+def resolve_state_dirs() -> list[Path]:
+    candidates = [
+        Path.home() / ".local" / "state" / "voicepaste",
+        Path.home() / "stt-service",
+    ]
+    return [p for p in candidates if p.exists() and p.is_dir()]
+
+
+def read_checkpoint(checkpoint_file: Path) -> datetime:
+    if checkpoint_file.exists():
+        try:
+            content = checkpoint_file.read_text(encoding="utf-8").strip()
+            if content:
+                return parse_timestamp(content)
+        except Exception as exc:
+            print(f"Warning: could not read {checkpoint_file} ({exc}); falling back to default window.", file=sys.stderr)
+    return datetime.now() - timedelta(days=14)
+
+
+def write_checkpoint(checkpoint_file: Path, ts: datetime) -> None:
+    checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint_file.write_text(ts.strftime("%Y-%m-%d %H:%M:%S") + "\n", encoding="utf-8")
+
+
+def archive_old_logs(log_dir: Path, days: int, dry_run: bool) -> list[Path]:
+    cutoff = datetime.now() - timedelta(days=days)
+    archived = []
+    zzdelete_dir = Path.home() / "ZZDelete" / "voicepaste"
+
+    for file_path in log_dir.glob("voicepaste-*.log"):
+        if not file_path.is_file():
+            continue
+        mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+        if mtime < cutoff:
+            archived.append(file_path)
+            if not dry_run:
+                zzdelete_dir.mkdir(parents=True, exist_ok=True)
+                dest = zzdelete_dir / file_path.name
+                shutil.move(str(file_path), str(dest))
+    return archived
+
+
+def harvest_from_dir(state_dir: Path, advance: bool, dry_run: bool) -> tuple[list[dict], datetime | None]:
+    checkpoint_file = state_dir / ".last_tuned_checkpoint"
+    last_checkpoint = read_checkpoint(checkpoint_file)
+    print(f"Directory: {state_dir}")
+    print(f"Last Checkpoint: {last_checkpoint.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    log_files: list[Path] = []
+    # Desktop logs
+    log_files.extend(sorted(state_dir.glob("voicepaste-*.log")))
+    # Server log
+    server_log = state_dir / "transcripts.log"
+    if server_log.exists():
+        log_files.append(server_log)
+
+    new_entries: list[dict] = []
+    latest_seen_ts: datetime | None = None
+
+    for log_path in log_files:
+        try:
+            with log_path.open("r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    line_s = line.strip()
+                    m = DESKTOP_LOG_RE.match(line_s) or SERVER_LOG_RE.match(line_s)
+                    if not m:
+                        continue
+                    try:
+                        entry_ts = parse_timestamp(m.group("ts"))
+                    except ValueError:
+                        continue
+
+                    if entry_ts > last_checkpoint:
+                        text = m.group("text").strip()
+                        if text:
+                            new_entries.append({"timestamp": entry_ts, "text": text, "source": log_path.name})
+                            if latest_seen_ts is None or entry_ts > latest_seen_ts:
+                                latest_seen_ts = entry_ts
+        except Exception as exc:
+            print(f"Error reading {log_path}: {exc}", file=sys.stderr)
+
+    if advance and latest_seen_ts and not dry_run:
+        write_checkpoint(checkpoint_file, latest_seen_ts)
+        print(f"Advanced checkpoint to: {latest_seen_ts.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    return new_entries, latest_seen_ts
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="VoicePaste Checkpoint-Aware Transcript Harvester & Log Archiver")
+    parser.add_argument("--dir", type=str, help="Specific directory to scan (default: auto-detects estate state dirs)")
+    parser.add_argument("--advance", action="store_true", help="Advance checkpoint timestamp to latest scanned utterance")
+    parser.add_argument("--dry-run", action="store_true", help="Preview new lines without updating checkpoint or moving files")
+    parser.add_argument("--archive-days", type=int, default=14, help="Days threshold to move old logs to ~/ZZDelete/voicepaste/ (default: 14)")
+    args = parser.parse_args()
+
+    if args.dir:
+        target_dirs = [Path(args.dir).expanduser().resolve()]
+    else:
+        target_dirs = resolve_state_dirs()
+
+    if not target_dirs:
+        print("No active VoicePaste log directories found.")
+        sys.exit(0)
+
+    total_new = 0
+    for s_dir in target_dirs:
+        print("=" * 60)
+        entries, _ = harvest_from_dir(s_dir, advance=args.advance, dry_run=args.dry_run)
+        archived = archive_old_logs(s_dir, days=args.archive_days, dry_run=args.dry_run)
+
+        print(f"\nFresh Utterances Found: {len(entries)}")
+        for e in entries:
+            print(f"  [{e['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}] {e['text']}")
+
+        if archived:
+            action = "Would move" if args.dry_run else "Safely moved"
+            print(f"\n{action} {len(archived)} old log(s) (> {args.archive_days} days) to ~/ZZDelete/voicepaste/:")
+            for a in archived:
+                print(f"   - {a.name}")
+
+        total_new += len(entries)
+
+    print("=" * 60)
+    print(f"Total un-reviewed utterances across all inspected nodes: {total_new}")
+
+
+if __name__ == "__main__":
+    main()
