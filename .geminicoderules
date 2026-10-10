@@ -1,0 +1,23 @@
+# VoicePaste — Project Law (.geminicoderules)
+
+## 1. Project Scope & Vault SSOT
+This workspace governs the cross-platform VoicePaste client ecosystem (Linux Wayland/Omarchy client, Windows system tray application, and configuration APIs).
+* **Vault Hub Note:** `Projects/Voice-to-Text/VoicePaste-Plan.md` and `Projects/Voice-to-Text/Voice-to-Text-Project.md`.
+* **Single Source of Truth:** Hotkey conventions, latency targets, and multi-client architecture are canonical in the vault hub notes.
+* **Backend STT Engine:** Hosted on NucBox at `http://192.168.0.194:8770` (Meshnet fallback `http://100.78.194.233:8770`).
+
+## 2. Low-Latency Dictation & Delivery Invariants
+* **Zero-Block Streaming:** Never introduce synchronous heavy LLM calls into the primary dictation path. Speech cleanup must rely on deterministic regex heuristics (<0.1ms) to eliminate fillers (*um, uh, er, ah*) and duplicate stutters.
+* **Focus Safety Invariant:** Desktop HUDs and overlays must never steal focus from the user's active window (`WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` on Windows; non-activating layer rules on Wayland).
+* **120-Second Recording Cutoff:** Recording threads must enforce a strict 120-second timeout guardrail to eliminate runaway memory or corrupted WAV buffers from stuck physical keys.
+* **Silent Push-to-Talk:** Avoid audible chimes on toggle or release; provide unobtrusive visual status notifications only.
+
+## 3. Platform Hotkeys & Endpoints
+* **Linux (Wayland / Hyprland / Omarchy):** `Super + Ctrl + X` toggle dictation via PipeWire (`pw-record`) and `wtype`.
+* **Windows 11:** `Ctrl + Alt` push-to-talk via `sounddevice` and virtual keystrokes.
+* **Vocabulary Quick-Add:** `Ctrl + Alt + W` (or `--learn` flag on Linux) to capture highlighted or clipboard terms into the shared NucBox dictionary.
+
+## 4. Multi-Model Task Routing
+* **Documentation & User Copy:** Dispatched to Claude Pro (Claude 5.5).
+* **Regex Patterns, Shell Scripts & Unit Tests:** Dispatched to NucBox Local AI (`qwen3-coder-next:q4_k_m, 80B MoE`).
+* **Lead Architect & Commits:** Antigravity builds, tests, and commits.
