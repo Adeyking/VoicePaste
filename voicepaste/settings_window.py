@@ -1,5 +1,24 @@
-import tkinter as tk
-from tkinter import messagebox, ttk
+try:
+    import tkinter as tk
+    from tkinter import messagebox, ttk
+except ImportError:
+    tk = None
+    ttk = None
+
+    class _MockMessageBox:
+        def askyesno(self, *a, **k):
+            return False
+
+        def showinfo(self, *a, **k):
+            pass
+
+        def showerror(self, *a, **k):
+            pass
+
+        def showwarning(self, *a, **k):
+            pass
+
+    messagebox = _MockMessageBox()
 from urllib.parse import urlparse
 from typing import Any, Callable, Dict, Optional
 

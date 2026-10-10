@@ -1,3 +1,4 @@
+import functools
 import re
 from typing import List, Pattern, Sequence, Tuple
 
@@ -30,6 +31,15 @@ def sanitize_model_output(text: str) -> str:
     return cleaned
 
 
+@functools.lru_cache(maxsize=1024)
+def _compile_exact_phrase_pattern(wrong: str) -> Pattern[str]:
+    # Use negative lookbehind/lookahead for word chars; if the term starts/ends with symbols,
+    # use non-whitespace boundaries so terms like ".NET" or "C++" match cleanly.
+    prefix = r"(?<!\w)" if re.match(r"^\w", wrong) else r"(?<!\S)"
+    suffix = r"(?!\w)" if re.search(r"\w$", wrong) else r"(?!\S)"
+    return re.compile(rf"{prefix}{re.escape(wrong)}{suffix}", re.IGNORECASE)
+
+
 def apply_phrase_corrections(
     text: str,
     phrase_exact: Sequence[Tuple[str, str]],
@@ -42,7 +52,7 @@ def apply_phrase_corrections(
     sorted_exact = sorted(phrase_exact, key=lambda pair: len(pair[0]), reverse=True)
 
     for wrong, right in sorted_exact:
-        pattern = re.compile(r"\b" + re.escape(wrong) + r"\b", re.IGNORECASE)
+        pattern = _compile_exact_phrase_pattern(wrong)
         out, count = pattern.subn(right, out)
         if count:
             applied.append(f"exact:{wrong}->{right}x{count}")
@@ -178,6 +188,17 @@ def dedupe_repeated_ngrams(text: str) -> str:
 
 
 def post_clean_dedupe(text: str) -> str:
+    if not text:
+        return ""
+    if "\n" in text:
+        lines = text.split("\n")
+        cleaned_lines = [post_clean_dedupe(line) for line in lines]
+        out: List[str] = []
+        for line in cleaned_lines:
+            if out and line and line == out[-1]:
+                continue
+            out.append(line)
+        return "\n".join(out)
     text = _normalize_sentence_spacing(text)
     if not text:
         return ""
@@ -190,6 +211,10 @@ def light_post_polish(text: str) -> str:
     out = (text or "").strip()
     if not out:
         return ""
+    if "\n" in out:
+        lines = out.split("\n")
+        polished_lines = [light_post_polish(line) if line.strip() else "" for line in lines]
+        return "\n".join(polished_lines)
 
     out = re.sub(r"\b(?:um+|uh+|er+|ah+|hmm+|mmm+|mm+)\b[,.!?]*", "", out, flags=re.IGNORECASE)
     out = re.sub(r"\s+([,.;:!?])", r"\1", out)

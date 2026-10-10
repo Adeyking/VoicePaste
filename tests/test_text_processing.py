@@ -264,3 +264,27 @@ def test_tuned_voice_logs_vocabulary_and_regex() -> None:
     out8, _ = apply_phrase_corrections("you can run the Closeout skill", phrase_exact, regex_rules)
     assert "run the run" not in out8
     assert "closeout skill" in out8.lower()
+
+
+def test_apply_phrase_corrections_with_symbols() -> None:
+    phrase_exact = [(".net", ".NET"), ("c++", "C++"), ("node.js", "Node.js")]
+    text, applied = apply_phrase_corrections(
+        "I write .net and c++ services alongside node.js apps", phrase_exact, []
+    )
+    assert text == "I write .NET and C++ services alongside Node.js apps"
+    assert "exact:.net->.NETx1" in applied
+    assert "exact:c++->C++x1" in applied
+    assert "exact:node.js->Node.jsx1" in applied
+
+
+def test_post_clean_dedupe_preserves_voice_command_newlines() -> None:
+    raw = "first item\n\nsecond item\nthird item"
+    res = post_clean_dedupe(raw)
+    assert res == "first item\n\nsecond item\nthird item"
+
+
+def test_post_clean_dedupe_dedupes_within_multiline_text() -> None:
+    raw = "first item first item\n\nsecond item\nthird item to John to John"
+    res = post_clean_dedupe(raw)
+    assert res == "first item\n\nsecond item\nthird item to John"
+

@@ -13,7 +13,10 @@ import sys
 import threading
 import time
 import wave
-import winsound
+if sys.platform == "win32":
+    import winsound
+else:
+    winsound = None
 from collections.abc import Callable
 from concurrent.futures import (
     Future,
@@ -26,10 +29,26 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import keyboard
+try:
+    import keyboard
+except ImportError:
+    class _MockKeyboard:
+        def send(self, *a, **kw): pass
+        def hook(self, *a, **kw): pass
+        def unhook(self, *a, **kw): pass
+        def add_hotkey(self, *a, **kw): pass
+        def remove_hotkey(self, *a, **kw): pass
+        def is_pressed(self, *a, **kw): return False
+
+    keyboard = _MockKeyboard()
+
 import numpy as np
 import pyperclip
-import sounddevice as sd
+
+try:
+    import sounddevice as sd
+except (ImportError, OSError):
+    sd = None
 
 from . import defaults
 from .audio_processing import (
@@ -128,16 +147,35 @@ MODEL_HOTKEYS = {
 DEFAULT_QUIT_HOTKEY = "ctrl+alt+q"
 VOCAB_SAVE_HOTKEY = "ctrl+alt+w"
 
-USER32 = ctypes.windll.user32
-USER32.GetForegroundWindow.restype = wintypes.HWND
-USER32.SetForegroundWindow.argtypes = [wintypes.HWND]
-USER32.SetForegroundWindow.restype = wintypes.BOOL
-USER32.GetAsyncKeyState.argtypes = [wintypes.INT]
-USER32.GetAsyncKeyState.restype = wintypes.SHORT
-USER32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
-USER32.GetWindowTextLengthW.restype = wintypes.INT
-USER32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, wintypes.INT]
-USER32.GetWindowTextW.restype = wintypes.INT
+if sys.platform == "win32":
+    USER32 = ctypes.windll.user32
+    USER32.GetForegroundWindow.restype = wintypes.HWND
+    USER32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    USER32.SetForegroundWindow.restype = wintypes.BOOL
+    USER32.GetAsyncKeyState.argtypes = [wintypes.INT]
+    USER32.GetAsyncKeyState.restype = wintypes.SHORT
+    USER32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    USER32.GetWindowTextLengthW.restype = wintypes.INT
+    USER32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, wintypes.INT]
+    USER32.GetWindowTextW.restype = wintypes.INT
+else:
+    class _MockUser32:
+        def GetForegroundWindow(self) -> int:
+            return 0
+
+        def SetForegroundWindow(self, _hwnd: Any) -> bool:
+            return False
+
+        def GetAsyncKeyState(self, _vkey: int) -> int:
+            return 0
+
+        def GetWindowTextLengthW(self, _hwnd: Any) -> int:
+            return 0
+
+        def GetWindowTextW(self, _hwnd: Any, _buf: Any, _maxlen: int) -> int:
+            return 0
+
+    USER32 = _MockUser32()
 
 
 def get_window_title_from_hwnd(hwnd: Any) -> str:
@@ -274,7 +312,12 @@ def _safe_int(value: Any, default: int, minimum: int = 1) -> int:
 
 
 def _expand_path(value: str) -> str:
-    return os.path.expandvars(os.path.expanduser(value))
+    expanded = os.path.expandvars(os.path.expanduser(value))
+    if sys.platform != "win32":
+        if "%USERPROFILE%" in expanded:
+            expanded = expanded.replace("%USERPROFILE%", str(Path.home()))
+        expanded = expanded.replace("\\", "/")
+    return expanded
 
 
 def _parse_keep_alive_s(keep_alive: str) -> float:
@@ -1069,6 +1112,7 @@ class PushToTalkClient:
         self._phrase_regex: list[tuple[re.Pattern[str], str]] = []
         self._phrase_mtime: float = 0.0
         self._snippet_pairs: list[tuple[str, str]] = []
+        self._snippets_mtime: float = 0.0
         self._partial_stop_event = threading.Event()
         self._partial_thread: threading.Thread | None = None
         self._partial_text_by_utterance: dict[int, str] = {}
@@ -1148,7 +1192,7 @@ class PushToTalkClient:
                 self._hud.set_enabled(enabled)
 
     def _beep(self, mode: str = "ok") -> None:
-        if not self.config.audio_feedback or sys.platform != "win32":
+        if not self.config.audio_feedback or sys.platform != "win32" or winsound is None:
             return
         try:
             winsound.MessageBeep(
@@ -1631,7 +1675,15 @@ class PushToTalkClient:
 
     def _copy_to_clipboard(self, text: str) -> None:
         with self._clipboard_lock:
-            pyperclip.copy(text)
+            try:
+                pyperclip.copy(text)
+            except Exception as exc:
+                if sys.platform != "win32":
+                    logging.getLogger("voicepaste").debug(
+                        "Headless clipboard copy suppressed: %s", exc
+                    )
+                else:
+                    raise
 
     def _check_stt_health(self, force: bool = False) -> bool:
         health_cfg = self._health_config_snapshot()
@@ -1664,9 +1716,12 @@ class PushToTalkClient:
         if status:
             self._status("AUDIO", f"Input warning: {status}")
         with self._lock:
-            if self._recording:
-                filtered = self._biquad_stream_filter.process(indata)
-                self._frames.append(filtered)
+            recording = self._recording
+        if recording:
+            filtered = self._biquad_stream_filter.process(indata)
+            with self._lock:
+                if self._recording:
+                    self._frames.append(filtered)
 
     def start_recording(self) -> None:
         target_hwnd = USER32.GetForegroundWindow()
@@ -1939,9 +1994,12 @@ class PushToTalkClient:
         if status:
             self._status("AUDIO", f"Meeting input warning: {status}")
         with self._lock:
-            if self._meeting_session_active:
-                filtered = self._meeting_biquad_stream_filter.process(indata)
-                self._meeting_session_frames.append(filtered)
+            active = self._meeting_session_active
+        if active:
+            filtered = self._meeting_biquad_stream_filter.process(indata)
+            with self._lock:
+                if self._meeting_session_active:
+                    self._meeting_session_frames.append(filtered)
 
     def start_meeting_session(self, announce: bool = True) -> None:
         with self._lock:
@@ -2790,10 +2848,28 @@ class PushToTalkClient:
         with self._config_lock:
             path = self.config.snippets_path_expanded()
         snippets = load_snippets(path)
-        with self._snippets_lock:
-            self._snippet_pairs = snippets
+        try:
+            if path.exists():
+                self._snippets_mtime = path.stat().st_mtime
+        except OSError:
+            pass
+        if snippets or not self._snippet_pairs:
+            with self._snippets_lock:
+                self._snippet_pairs = snippets
+
+    def _ensure_snippets_fresh(self) -> None:
+        try:
+            with self._config_lock:
+                path = self.config.snippets_path_expanded()
+            if path.exists():
+                mtime = path.stat().st_mtime
+                if mtime != self._snippets_mtime:
+                    self._load_snippets()
+        except OSError:
+            pass
 
     def _apply_snippets(self, text: str) -> tuple[str, list[str]]:
+        self._ensure_snippets_fresh()
         with self._snippets_lock:
             snippets = list(self._snippet_pairs)
         return apply_snippets(text, snippets)

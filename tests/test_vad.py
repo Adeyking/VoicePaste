@@ -65,3 +65,35 @@ def test_wait_for_silence_times_out_on_continuous_speech() -> None:
         sleep_fn=lambda _: None,
     )
     assert result is False
+
+
+def test_wait_for_silence_inspects_only_trailing_frames() -> None:
+    # 10 loud frames followed by 2 quiet frames covering 5600 samples
+    loud_frames = [np.random.randint(-5000, 5000, size=2800, dtype=np.int16) for _ in range(10)]
+    quiet_frames = [np.random.randint(-50, 50, size=2800, dtype=np.int16) for _ in range(2)]
+    all_frames = loud_frames + quiet_frames
+
+    result = wait_for_silence(
+        get_audio_frames=lambda: all_frames,
+        is_active=lambda: True,
+        max_hold_s=1.0,
+        energy_threshold=400.0,
+        sleep_fn=lambda _: None,
+    )
+    # Even though earlier frames were loud, the trailing 5600 samples are quiet!
+    assert result is True
+
+
+def test_wait_for_silence_handles_empty_and_zero_size_frames() -> None:
+    empty_frame = np.array([], dtype=np.int16)
+    quiet_frame = np.random.randint(-50, 50, size=5600, dtype=np.int16)
+
+    result = wait_for_silence(
+        get_audio_frames=lambda: [empty_frame, quiet_frame],
+        is_active=lambda: True,
+        max_hold_s=1.0,
+        energy_threshold=400.0,
+        sleep_fn=lambda _: None,
+    )
+    assert result is True
+

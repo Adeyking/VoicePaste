@@ -3,9 +3,16 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
-import keyboard
+try:
+    import keyboard
+except ImportError:
+    class _MockKeyboard:
+        def send(self, *a, **kw):
+            pass
+
+    keyboard = _MockKeyboard()
 
 
 def paste_transcript(

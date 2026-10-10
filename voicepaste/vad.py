@@ -48,8 +48,23 @@ def wait_for_silence(
         frames = get_audio_frames()
         if not frames:
             return True
+        recent_frames = []
+        samples_collected = 0
+        needed_samples = int(hold_window_s * sample_rate)
+        for frame in reversed(frames):
+            if frame is None or frame.size == 0:
+                continue
+            recent_frames.append(frame)
+            samples_collected += frame.shape[0] if frame.ndim > 0 else frame.size
+            if samples_collected >= needed_samples:
+                break
+
+        if not recent_frames:
+            return True
+
+        recent_frames.reverse()
         try:
-            audio_tail = np.concatenate(frames, axis=0)
+            audio_tail = np.concatenate(recent_frames, axis=0)
         except Exception:
             return True
 

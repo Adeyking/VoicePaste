@@ -3,7 +3,10 @@ from __future__ import annotations
 import sys
 import time
 import threading
-import tkinter as tk
+try:
+    import tkinter as tk
+except ImportError:
+    tk = None
 from typing import Optional, Tuple, Dict, Any
 
 IS_WINDOWS = sys.platform == "win32"
@@ -49,6 +52,8 @@ class FloatingHUD:
             self._start_loop()
 
     def _start_loop(self) -> None:
+        if tk is None:
+            return
         with self._lock:
             if self._running:
                 return
