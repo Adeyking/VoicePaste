@@ -11,6 +11,9 @@ This workspace governs the cross-platform VoicePaste client ecosystem (Linux Way
 * **Focus Safety Invariant:** Desktop HUDs and overlays must never steal focus from the user's active window (`WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` on Windows; non-activating layer rules on Wayland).
 * **120-Second Recording Cutoff:** Recording threads must enforce a strict 120-second timeout guardrail to eliminate runaway memory or corrupted WAV buffers from stuck physical keys.
 * **Silent Push-to-Talk:** Avoid audible chimes on toggle or release; provide unobtrusive visual status notifications only.
+* **Multi-Line Text Pipeline Invariant:** Text deduplication and post-polish routines must process multi-line strings line-by-line (`split('\n')`). Never perform naive whitespace tokenisation or global `\s{2,}` collapsing on text containing intentional voice-command line breaks (`"new paragraph"`, `"new line"`).
+* **Technical Dictionary Boundary Invariant:** Exact phrase match patterns must not rely on bare `\b` word boundaries for technical vocabularies containing symbols (e.g. `.NET`, `C++`). Always enforce negative lookarounds `(?<!\w)` and `(?!\w)` for alphanumeric terms, falling back to non-whitespace boundaries `(?<!\S)` and `(?!\S)` when matching leading or trailing punctuation.
+* **Audio Callback Lock Decoupling Invariant:** Real-time biquad rumble filters must remain inside the audio callback to prevent post-speech release lag and maintain valid VAD energy thresholds. Prevent callback thread lock contention by executing `_biquad_stream_filter.process(indata)` outside `self._lock` before the frame list append.
 
 ## 3. Platform Hotkeys & Endpoints
 * **Linux (Wayland / Hyprland / Omarchy):** `Super + Ctrl + X` toggle dictation via PipeWire (`pw-record`) and `wtype`.
