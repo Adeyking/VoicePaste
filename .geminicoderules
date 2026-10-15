@@ -24,3 +24,11 @@ This workspace governs the cross-platform VoicePaste client ecosystem (Linux Way
 * **Documentation & User Copy:** Dispatched to Claude Pro (Claude 5.5).
 * **Regex Patterns, Shell Scripts & Unit Tests:** Dispatched to NucBox Local AI (`qwen3-coder-next:q4_k_m, 80B MoE`).
 * **Lead Architect & Commits:** Antigravity builds, tests, and commits.
+
+## 5. STT Engine Tuning & Vocabulary Invariants
+* **Whisper Prompt Token Ceiling:** The initial prompt prefix in `stt.env` must not exceed 170 BPE tokens, leaving at least 50 tokens of headroom below Whisper's hard 224-token decoder ceiling. Never exceed 224 tokens; Whisper silently drops tokens from the start of the prompt without emitting errors.
+* **VAD Safety Padding Invariant:** Backend Silero VAD parameters must maintain `speech_pad_ms >= 400` and `min_silence_duration_ms >= 700` to prevent unvoiced trailing consonants from being dropped. Audio recording clients must terminate recording immediately upon hotkey trigger with zero post-speech sleep. Never introduce client recording sleeps, which record physical keyboard switch clacks and add latency.
+* **Anti-Collision Vocabulary Law:** Never introduce bare exact word replacements for polysemous nouns or standard verbs with legitimate everyday English or engineering usage (e.g. `solids`, `hacker`, `used plan`, `I'd refer to`). All phonetic homophone corrections for common English words must enforce strict multi-word contextual boundaries or regular expressions.
+* **CPU Beam Size Standard:** Final transcription on CPU uses `STT_BEAM_SIZE=2` to ensure secondary candidate evaluation for short technical commands while avoiding the 30 to 50 percent latency penalty of `beam=3`.
+* **Mechanical Invariance Testing:** Every prompt refactor or dictionary update must execute `tests/test_vocabulary_engine.py` on NucBox to guarantee that core identity, user names, and operational commands are never eroded.
+
