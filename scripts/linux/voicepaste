@@ -9,7 +9,7 @@ export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"
 
 set -uo pipefail
 
-STT_URL=${STT_URL:-http://localhost:8770}
+STT_URL=${STT_URL:-http://192.168.0.194:8770}
 STT_LANGUAGE=${STT_LANGUAGE:-en}
 MAX_SECONDS=${MAX_SECONDS:-120}
 
@@ -24,9 +24,11 @@ mkdir -p "$state_dir"
 notify() { notify-send -a VoicePaste -t "${3:-3000}" "$1" "${2:-}"; }
 
 deliver() {
-  # Type at the cursor; fall back to the clipboard when compositor refuses.
-  if ! wtype -- "$1" 2>/dev/null; then
-    printf '%s' "$1" | wl-copy
+  # Always preserve transcript in clipboard for instant recovery
+  printf '%s' "$1" | wl-copy 2>/dev/null || true
+
+  # Settle pause (-s 100ms) to ensure compositor key release events clear, plus 2ms inter-key delay
+  if ! wtype -s 100 -d 2 -- "$1" 2>/dev/null; then
     notify "Copied to clipboard" "Typing failed, paste with SUPER + V or Ctrl + V"
   fi
 }
@@ -55,22 +57,31 @@ stop_and_transcribe() {
 
   notify "Transcribing" "" 1500
 
-  # Trim trailing room silence (conservative -50dB threshold with 250ms safety cushion)
-  local upload_wav="$wav"
-  local trimmed_wav="$state_dir/trimmed.wav"
-  if command -v ffmpeg >/dev/null 2>&1; then
-    if ffmpeg -y -v error -i "$wav" -af "silenceremove=stop_periods=1:stop_duration=0.3:stop_threshold=-50dB,apad=pad_dur=0.25" "$trimmed_wav" 2>/dev/null && [[ -s "$trimmed_wav" ]]; then
-      upload_wav="$trimmed_wav"
+  # Send raw audio directly to NucBox STT service.
+  # Client-side silence cutoff is removed; NucBox native Silero VAD handles pauses without truncation.
+  local active_url="$STT_URL"
+  local response=""
+  local text=""
+
+  # Attempt direct transcription with 2s connect timeout; fail over to Meshnet if primary LAN unreachable
+  response=$(curl -sS --max-time 120 --connect-timeout 2 \
+    -H "Authorization: Bearer ${STT_BEARER_TOKEN:-}" \
+    -F "file=@$wav;type=audio/wav" \
+    -F "language=$STT_LANGUAGE" \
+    "$active_url/transcribe" 2>&1)
+  local curl_rc=$?
+
+  if [[ $curl_rc -ne 0 || -z $response || $response == *"Failed to connect"* ]]; then
+    local meshnet_url="http://100.78.194.233:8770"
+    if [[ "$active_url" != "$meshnet_url" ]]; then
+      response=$(curl -sS --max-time 120 --connect-timeout 2 \
+        -H "Authorization: Bearer ${STT_BEARER_TOKEN:-}" \
+        -F "file=@$wav;type=audio/wav" \
+        -F "language=$STT_LANGUAGE" \
+        "$meshnet_url/transcribe" 2>&1)
     fi
   fi
-
-  local response text
-  response=$(curl -sS --max-time 120 \
-    -H "Authorization: Bearer ${STT_BEARER_TOKEN:-}" \
-    -F "file=@$upload_wav;type=audio/wav" \
-    -F "language=$STT_LANGUAGE" \
-    "$STT_URL/transcribe" 2>&1)
-  rm -f "$trimmed_wav" "$wav"
+  rm -f "$wav"
 
   if [[ -z $response ]] || ! text=$(jq -re '.text' <<<"$response" 2>/dev/null); then
     notify "STT failed" "${response:0:200}" 6000
