@@ -27,8 +27,8 @@ deliver() {
   # Always preserve transcript in clipboard for instant recovery
   printf '%s' "$1" | wl-copy 2>/dev/null || true
 
-  # Settle pause (-s 100ms) to ensure compositor key release events clear, plus 2ms inter-key delay
-  if ! wtype -s 100 -d 2 -- "$1" 2>/dev/null; then
+  # Fast typing delivery (-s 20ms settle, 1ms inter-key delay)
+  if ! wtype -s 20 -d 1 -- "$1" 2>/dev/null; then
     notify "Copied to clipboard" "Typing failed, paste with SUPER + V or Ctrl + V"
   fi
 }
@@ -45,6 +45,9 @@ stop_and_transcribe() {
   local pid
   pid=$(<"$pidfile")
   rm -f "$pidfile"
+
+  # Short 100ms hardware drain allows PipeWire ring buffers to complete trailing speech phonemes
+  sleep 0.10
 
   # SIGINT lets pw-record finalise the WAV header; SIGTERM would truncate it.
   kill -INT "$pid" 2>/dev/null
